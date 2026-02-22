@@ -1,0 +1,57 @@
+[project]
+name = "whaleclaw"
+version = "0.1.0"
+description = "WhaleClaw — Personal AI Assistant (Python)"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+    "websockets>=14.0",
+    "pydantic>=2.10",
+    "pydantic-settings>=2.7",
+    "httpx>=0.28",
+    "typer>=0.15",
+    "rich>=13.9",
+    "structlog>=24.4",
+    "aiosqlite>=0.20",
+    "python-multipart>=0.0.18",
+    "cryptography>=43.0",
+    "pyyaml>=6.0",
+    "playwright>=1.48",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
+    "ruff>=0.8",
+    "pyright>=1.1",
+    "pytest-mock>=3.14",
+    "httpx[http2]>=0.28",
+]
+
+[project.scripts]
+whaleclaw = "whaleclaw.cli.main:app"
+
+[project.entry-points."whaleclaw.plugins"]
+evomap = "whaleclaw.plugins.evomap.plugin:plugin"
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "A", "SIM"]
+
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "strict"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

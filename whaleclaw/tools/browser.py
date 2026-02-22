@@ -1,0 +1,386 @@
+"""Browser control tool powered by Playwright (uses local Chrome)."""
+
+from __future__ import annotations
+
+import uuid
+from pathlib import Path
+from typing import Any
+
+from whaleclaw.config.paths import WHALECLAW_HOME
+from whaleclaw.tools.base import Tool, ToolDefinition, ToolParameter, ToolResult
+from whaleclaw.utils.log import get_logger
+
+log = get_logger(__name__)
+
+_ACTIONS = [
+    "navigate",
+    "screenshot",
+    "click",
+    "type",
+    "get_text",
+    "evaluate",
+    "search_images",
+    "back",
+    "close",
+]
+
+_SCREENSHOT_DIR = WHALECLAW_HOME / "screenshots"
+_DOWNLOAD_DIR = WHALECLAW_HOME / "downloads"
+
+_VIEWPORT = {"width": 1280, "height": 800}
+_TIMEOUT = 15_000
+
+_BING_JS = """
+() => {
+    const imgs = document.querySelectorAll('a.iusc');
+    const urls = [];
+    for (const a of imgs) {
+        try {
+            const m = JSON.parse(a.getAttribute('m') || '{}');
+            if (m.murl) urls.push(m.murl);
+        } catch {}
+    }
+    if (!urls.length) {
+        for (const img of document.querySelectorAll('img.mimg, img[src^="http"]')) {
+            const s = img.src || '';
+            if (s.startsWith('http') && !s.includes('bing.com/th?') && img.naturalWidth > 60)
+                urls.push(s);
+        }
+    }
+    return urls.slice(0, 8);
+}
+"""
+
+_BAIDU_JS = """
+() => {
+    const urls = [];
+    for (const img of document.querySelectorAll('img.main_img, img[data-imgurl]')) {
+        const u = img.getAttribute('data-imgurl') || img.src || '';
+        if (u.startsWith('http') && !u.includes('baidu.com/img/'))
+            urls.push(u);
+    }
+    if (!urls.length) {
+        for (const a of document.querySelectorAll('a[href*="objurl"]')) {
+            const m = new URLSearchParams(a.href.split('?')[1] || '');
+            const ou = m.get('objurl');
+            if (ou) urls.push(decodeURIComponent(ou));
+        }
+    }
+    return urls.slice(0, 8);
+}
+"""
+
+_GOOGLE_JS = """
+() => {
+    const imgs = document.querySelectorAll('img[src^="http"]');
+    const urls = [];
+    for (const img of imgs) {
+        const src = img.src;
+        if (src.includes('gstatic.com/images') || src.includes('google.com/logos'))
+            continue;
+        if (img.naturalWidth > 80 && img.naturalHeight > 80)
+            urls.push(src);
+    }
+    return urls.slice(0, 5);
+}
+"""
+
+_IMAGE_ENGINES: list[tuple[str, object, str]] = [
+    (
+        "google",
+        lambda q: f"https://www.google.com/search?q={q}&tbm=isch&udm=2",
+        _GOOGLE_JS,
+    ),
+    (
+        "bing",
+        lambda q: f"https://www.bing.com/images/search?q={q}&form=HDRSC2",
+        _BING_JS,
+    ),
+    (
+        "baidu",
+        lambda q: f"https://image.baidu.com/search/index?tn=baiduimage&word={q}",
+        _BAIDU_JS,
+    ),
+]
+
+
+class BrowserTool(Tool):
+    """Browser control tool — uses local Chrome via Playwright.
+
+    Supports navigation, screenshots, DOM interaction, JS evaluation,
+    and an image-search shortcut that downloads the first result.
+    """
+
+    def __init__(self) -> None:
+        self._browser: Any = None
+        self._page: Any = None
+        self._playwright: Any = None
+
+    @property
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name="browser",
+            description=(
+                "Control a real Chrome browser. Actions: "
+                "navigate(url) — open URL; "
+                "screenshot — capture current page; "
+                "click(selector) — click element; "
+                "type(selector, text) — type into input; "
+                "get_text(selector?) — extract page/element text; "
+                "evaluate(script) — run JavaScript; "
+                "search_images(query) — Google image search and download first result; "
+                "back — go back; "
+                "close — close browser."
+            ),
+            parameters=[
+                ToolParameter(
+                    name="action",
+                    type="string",
+                    description="Action to perform.",
+                    required=True,
+                    enum=_ACTIONS,
+                ),
+                ToolParameter(
+                    name="url",
+                    type="string",
+                    description="URL for navigate action.",
+                    required=False,
+                ),
+                ToolParameter(
+                    name="selector",
+                    type="string",
+                    description="CSS selector for click/type/get_text.",
+                    required=False,
+                ),
+                ToolParameter(
+                    name="text",
+                    type="string",
+                    description="Text to type, or search query for search_images.",
+                    required=False,
+                ),
+                ToolParameter(
+                    name="script",
+                    type="string",
+                    description="JavaScript code for evaluate action.",
+                    required=False,
+                ),
+            ],
+        )
+
+    async def _ensure_browser(self) -> Any:
+        """Launch browser if not already running; auto-installs playwright."""
+        if self._page is not None:
+            return self._page
+
+        from whaleclaw.tools.deps import ensure_tool_dep
+
+        if not ensure_tool_dep("playwright"):
+            raise RuntimeError("playwright 安装失败，请手动执行: pip install playwright && playwright install chromium")
+
+        from playwright.async_api import async_playwright
+
+        self._playwright = await async_playwright().start()
+        self._browser = await self._playwright.chromium.launch(
+            channel="chrome",
+            headless=True,
+            args=["--disable-blink-features=AutomationControlled"],
+        )
+        context = await self._browser.new_context(
+            viewport=_VIEWPORT,
+            user_agent=(
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/131.0.0.0 Safari/537.36"
+            ),
+        )
+        self._page = await context.new_page()
+        _SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
+        _DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        log.info("browser.launched", channel="chrome", headless=True)
+        return self._page
+
+    async def _close(self) -> ToolResult:
+        if self._browser:
+            await self._browser.close()
+            self._browser = None
+            self._page = None
+        if self._playwright:
+            await self._playwright.stop()
+            self._playwright = None
+        return ToolResult(success=True, output="浏览器已关闭")
+
+    async def execute(self, **kwargs: Any) -> ToolResult:
+        action: str = kwargs.get("action", "")
+        if not action:
+            return ToolResult(success=False, output="", error="action 参数为空")
+
+        if action == "close":
+            return await self._close()
+
+        try:
+            page = await self._ensure_browser()
+        except Exception as exc:
+            return ToolResult(success=False, output="", error=f"浏览器启动失败: {exc}")
+
+        try:
+            return await self._dispatch(page, action, kwargs)
+        except Exception as exc:
+            log.error("browser.error", action=action, error=str(exc))
+            return ToolResult(success=False, output="", error=str(exc))
+
+    async def _dispatch(self, page: Any, action: str, kwargs: dict[str, Any]) -> ToolResult:
+        if action == "navigate":
+            url = kwargs.get("url", "")
+            if not url:
+                return ToolResult(success=False, output="", error="url 参数为空")
+            await page.goto(url, timeout=_TIMEOUT, wait_until="domcontentloaded")
+            title = await page.title()
+            return ToolResult(
+                success=True,
+                output=f"已打开: {url}\n标题: {title}",
+            )
+
+        elif action == "screenshot":
+            return await self._screenshot(page)
+
+        elif action == "click":
+            selector = kwargs.get("selector", "")
+            if not selector:
+                return ToolResult(success=False, output="", error="selector 参数为空")
+            await page.click(selector, timeout=_TIMEOUT)
+            return ToolResult(success=True, output=f"已点击: {selector}")
+
+        elif action == "type":
+            selector = kwargs.get("selector", "")
+            text = kwargs.get("text", "")
+            if not selector or not text:
+                return ToolResult(
+                    success=False, output="", error="selector 和 text 参数必填"
+                )
+            await page.fill(selector, text, timeout=_TIMEOUT)
+            return ToolResult(
+                success=True, output=f"已输入 '{text}' 到 {selector}"
+            )
+
+        elif action == "get_text":
+            selector = kwargs.get("selector", "")
+            if selector:
+                el = await page.query_selector(selector)
+                if el is None:
+                    return ToolResult(
+                        success=False, output="", error=f"元素未找到: {selector}"
+                    )
+                text = await el.inner_text()
+            else:
+                text = await page.inner_text("body")
+            truncated = text[:5000]
+            if len(text) > 5000:
+                truncated += f"\n...(截断，共 {len(text)} 字符)"
+            return ToolResult(success=True, output=truncated)
+
+        elif action == "evaluate":
+            script = kwargs.get("script", "")
+            if not script:
+                return ToolResult(
+                    success=False, output="", error="script 参数为空"
+                )
+            result = await page.evaluate(script)
+            return ToolResult(success=True, output=str(result)[:5000])
+
+        elif action == "search_images":
+            query = kwargs.get("text", "")
+            if not query:
+                return ToolResult(
+                    success=False, output="", error="text 参数为空（搜索关键词）"
+                )
+            return await self._search_images(page, query)
+
+        elif action == "back":
+            await page.go_back(timeout=_TIMEOUT)
+            title = await page.title()
+            return ToolResult(success=True, output=f"已后退，当前页: {title}")
+
+        return ToolResult(
+            success=False, output="", error=f"未知 action: {action}"
+        )
+
+    async def _screenshot(self, page: Any) -> ToolResult:
+        filename = f"screenshot_{uuid.uuid4().hex[:8]}.png"
+        path = _SCREENSHOT_DIR / filename
+        await page.screenshot(path=str(path), full_page=False)
+        return ToolResult(
+            success=True,
+            output=f"截图已保存: {path}",
+        )
+
+    async def _search_images(self, page: Any, query: str) -> ToolResult:
+        """Image search -> download first result. Tries Bing then Google."""
+        img_urls: list[str] = []
+
+        for engine, url_fn, extract_js in _IMAGE_ENGINES:
+            try:
+                search_url = url_fn(query)
+                log.info("browser.image_search", engine=engine, query=query)
+                await page.goto(search_url, timeout=_TIMEOUT, wait_until="domcontentloaded")
+                await page.wait_for_timeout(2500)
+                img_urls = await page.evaluate(extract_js)
+                if img_urls:
+                    break
+            except Exception as exc:
+                log.warning("browser.image_search_failed", engine=engine, error=str(exc))
+                continue
+
+        if not img_urls:
+            ss = await self._screenshot(page)
+            return ToolResult(
+                success=False,
+                output=f"未找到图片结果。页面截图: {ss.output}",
+                error="图片搜索未返回有效结果",
+            )
+
+        import httpx
+
+        for url in img_urls:
+            try:
+                async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+                    resp = await client.get(url)
+                    if resp.status_code != 200:
+                        continue
+                    ct = resp.headers.get("content-type", "")
+                    if "image" not in ct:
+                        continue
+
+                    ext = "jpg"
+                    if "png" in ct:
+                        ext = "png"
+                    elif "webp" in ct:
+                        ext = "webp"
+                    elif "gif" in ct:
+                        ext = "gif"
+
+                    safe_name = "".join(
+                        c if c.isascii() and c.isalnum() or c in "-_" else ""
+                        for c in query[:30]
+                    ).strip("_") or "image"
+                    filename = f"{safe_name}_{uuid.uuid4().hex[:8]}.{ext}"
+                    path = _DOWNLOAD_DIR / filename
+                    path.write_bytes(resp.content)
+
+                    size_kb = len(resp.content) / 1024
+                    return ToolResult(
+                        success=True,
+                        output=(
+                            f"图片已下载，请使用以下路径展示（禁止修改或编造路径）:\n"
+                            f"![图片]({path})\n"
+                            f"文件: {path}\n"
+                            f"大小: {size_kb:.0f}KB"
+                        ),
+                    )
+            except Exception:
+                continue
+
+        return ToolResult(
+            success=False,
+            output="",
+            error="所有图片 URL 下载失败",
+        )

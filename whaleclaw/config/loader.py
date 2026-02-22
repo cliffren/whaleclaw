@@ -1,0 +1,111 @@
+"""Configuration loading, merging, and validation."""
+
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+
+from whaleclaw.config.paths import CONFIG_FILE
+from whaleclaw.config.schema import WhaleclawConfig
+from whaleclaw.types import ConfigError
+
+_config: WhaleclawConfig | None = None
+
+_ENV_PREFIX = "WHALECLAW_"
+
+
+def _deep_merge(base: dict[str, object], override: dict[str, object]) -> dict[str, object]:
+    """Recursively merge *override* into *base* (mutates *base*)."""
+    for key, value in override.items():
+        if key in base and isinstance(base[key], dict) and isinstance(value, dict):
+            _deep_merge(base[key], value)  # type: ignore[arg-type]
+        else:
+            base[key] = value
+    return base
+
+
+def _load_json(path: Path) -> dict[str, object]:
+    if not path.is_file():
+        return {}
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError) as exc:
+        raise ConfigError(f"配置文件读取失败: {path} — {exc}") from exc
+    if not isinstance(data, dict):
+        raise ConfigError(f"配置文件格式错误 (期望 JSON 对象): {path}")
+    return data  # type: ignore[return-value]
+
+
+def _env_overrides() -> dict[str, object]:
+    """Build a nested dict from ``WHALECLAW_*`` environment variables.
+
+    Example: ``WHALECLAW_GATEWAY_PORT=9000`` → ``{"gateway": {"port": 9000}}``.
+    """
+    result: dict[str, object] = {}
+    for key, value in os.environ.items():
+        if not key.startswith(_ENV_PREFIX):
+            continue
+        parts = key[len(_ENV_PREFIX) :].lower().split("_")
+        node: dict[str, object] = result
+        for part in parts[:-1]:
+            node = node.setdefault(part, {})  # type: ignore[assignment]
+        raw: object = value
+        if value.isdigit():
+            raw = int(value)
+        elif value.lower() in ("true", "false"):
+            raw = value.lower() == "true"
+        node[parts[-1]] = raw
+    return result
+
+
+def load_config(
+    *,
+    config_path: Path | None = None,
+    cli_overrides: dict[str, object] | None = None,
+) -> WhaleclawConfig:
+    """Load, merge and validate configuration.
+
+    Priority (high → low):
+    1. *cli_overrides*
+    2. Environment variables (``WHALECLAW_`` prefix)
+    3. User config file (``~/.whaleclaw/whaleclaw.json``)
+    4. Project config file (``./whaleclaw.json``)
+    5. Schema defaults
+    """
+    merged: dict[str, object] = {}
+
+    project_cfg = Path("whaleclaw.json")
+    _deep_merge(merged, _load_json(project_cfg))
+
+    user_cfg = config_path or CONFIG_FILE
+    _deep_merge(merged, _load_json(user_cfg))
+
+    _deep_merge(merged, _env_overrides())
+
+    if cli_overrides:
+        _deep_merge(merged, cli_overrides)
+
+    try:
+        cfg = WhaleclawConfig.model_validate(merged)
+    except Exception as exc:
+        raise ConfigError(f"配置校验失败: {exc}") from exc
+
+    global _config  # noqa: PLW0603
+    _config = cfg
+    return cfg
+
+
+def get_config() -> WhaleclawConfig:
+    """Return the current global config, loading defaults if needed."""
+    global _config  # noqa: PLW0603
+    if _config is None:
+        _config = load_config()
+    return _config
+
+
+def reset_config() -> None:
+    """Reset global config (mainly for testing)."""
+    global _config  # noqa: PLW0603
+    _config = None

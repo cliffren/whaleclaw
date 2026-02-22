@@ -1,0 +1,42 @@
+# Python runtime (embedded, 375MB+)
+python/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Linter / test cache
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+
+# User data (credentials, sessions, logs)
+~/.whaleclaw/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node (if any)
+node_modules/
+
+# Env files
+.env
+.env.*
+
+# Generated test files
+*.pptx
+*.xlsx
+*.docx

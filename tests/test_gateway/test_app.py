@@ -1,0 +1,80 @@
+"""Tests for the Gateway FastAPI application."""
+
+from __future__ import annotations
+
+import pytest
+from httpx import ASGITransport, AsyncClient
+
+from whaleclaw.config.schema import WhaleclawConfig
+from whaleclaw.gateway.app import create_app
+
+
+@pytest.fixture()
+def app():  # noqa: ANN201
+    config = WhaleclawConfig()
+    return create_app(config)
+
+
+@pytest.mark.asyncio
+async def test_status_endpoint(app) -> None:  # noqa: ANN001
+    transport = ASGITransport(app=app)  # type: ignore[arg-type]
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get("/api/status")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["gateway"]["port"] == 18789
+
+
+@pytest.mark.asyncio
+async def test_index_returns_html_or_json(app) -> None:  # noqa: ANN001
+    transport = ASGITransport(app=app)  # type: ignore[arg-type]
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get("/")
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_sessions_crud(tmp_path, monkeypatch) -> None:  # noqa: ANN001
+    """Test session CRUD via REST API (with lifespan)."""
+    import whaleclaw.gateway.app as app_mod
+    import whaleclaw.sessions.store as store_mod
+
+    monkeypatch.setattr(store_mod, "_DB_PATH", tmp_path / "sessions.db")
+    monkeypatch.setattr(app_mod, "_UPLOAD_DIR", tmp_path / "uploads")
+    monkeypatch.setattr(app_mod, "_CRON_DB_PATH", tmp_path / "cron.db")
+
+    config = WhaleclawConfig()
+    test_app = create_app(config)
+    transport = ASGITransport(app=test_app)  # type: ignore[arg-type]
+    async with (
+        AsyncClient(transport=transport, base_url="http://test") as client,
+        test_app.router.lifespan_context(test_app),
+    ):
+        resp = await client.post("/api/sessions")
+        assert resp.status_code == 200
+        data = resp.json()
+        sid = data["id"]
+        assert sid
+
+        resp = await client.get("/api/sessions")
+        assert resp.status_code == 200
+        assert any(s["id"] == sid for s in resp.json())
+
+        resp = await client.get(f"/api/sessions/{sid}")
+        assert resp.status_code == 200
+        assert resp.json()["id"] == sid
+
+        resp = await client.delete(f"/api/sessions/{sid}")
+        assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_auth_login_no_password_mode(app) -> None:  # noqa: ANN001
+    transport = ASGITransport(app=app)  # type: ignore[arg-type]
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/api/auth/login",
+            json={"password": "test"},
+        )
+        assert resp.status_code == 400

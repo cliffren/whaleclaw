@@ -1,0 +1,265 @@
+"""EvoMap plugin main entry."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from whaleclaw.plugins.evomap.bounty import BountyManager
+from whaleclaw.plugins.evomap.client import A2AClient
+from whaleclaw.plugins.evomap.config import EvoMapConfig
+from whaleclaw.plugins.evomap.fetcher import AssetFetcher
+from whaleclaw.plugins.evomap.identity import EvoMapIdentity
+from whaleclaw.plugins.evomap.publisher import AssetPublisher
+from whaleclaw.plugins.hooks import HookContext, HookPoint, HookResult
+from whaleclaw.plugins.sdk import WhaleclawPlugin, WhaleclawPluginApi
+from whaleclaw.tools.base import Tool, ToolDefinition, ToolParameter, ToolResult
+
+
+class EvoMapPublishTool(Tool):
+    """发布解决方案到 EvoMap 网络。"""
+
+    def __init__(self, publisher: AssetPublisher) -> None:
+        self._publisher = publisher
+
+    @property
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name="evomap_publish",
+            description="将验证过的修复/优化/创新打包为 Gene+Capsule 发布到 EvoMap 网络。",
+            parameters=[
+                ToolParameter(
+                    name="category",
+                    type="string",
+                    description="repair | optimize | innovate",
+                ),
+                ToolParameter(
+                    name="signals",
+                    type="string",
+                    description="逗号分隔的信号关键词",
+                ),
+                ToolParameter(
+                    name="gene_summary",
+                    type="string",
+                    description="Gene 摘要",
+                ),
+                ToolParameter(
+                    name="capsule_summary",
+                    type="string",
+                    description="Capsule 摘要 (至少 20 字)",
+                ),
+                ToolParameter(
+                    name="confidence",
+                    type="number",
+                    description="置信度 0-1",
+                ),
+                ToolParameter(
+                    name="files_affected",
+                    type="integer",
+                    description="影响文件数",
+                ),
+                ToolParameter(
+                    name="lines_affected",
+                    type="integer",
+                    description="影响行数",
+                ),
+            ],
+        )
+
+    async def execute(self, **kwargs: Any) -> ToolResult:
+        from whaleclaw.plugins.evomap.models import BlastRadius, Outcome
+
+        signals = [s.strip() for s in str(kwargs.get("signals", "")).split(",") if s.strip()]
+        if not signals:
+            return ToolResult(success=False, output="", error="信号不能为空")
+        try:
+            result = await self._publisher.publish_fix(
+                category=kwargs.get("category", "repair"),
+                signals=signals,
+                gene_summary=str(kwargs.get("gene_summary", "")),
+                capsule_summary=str(kwargs.get("capsule_summary", "")),
+                confidence=float(kwargs.get("confidence", 0.8)),
+                blast_radius=BlastRadius(
+                    files=int(kwargs.get("files_affected", 1)),
+                    lines=int(kwargs.get("lines_affected", 1)),
+                ),
+                outcome=Outcome(status="success", score=1.0),
+            )
+            return ToolResult(success=True, output=str(result), error=None)
+        except Exception as e:
+            return ToolResult(success=False, output="", error=f"发布失败: {e}")
+
+
+class EvoMapFetchTool(Tool):
+    """从 EvoMap 搜索已验证的解决方案。"""
+
+    def __init__(self, fetcher: AssetFetcher) -> None:
+        self._fetcher = fetcher
+
+    @property
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name="evomap_fetch",
+            description="按信号搜索 EvoMap 网络中已有的 Capsule 解决方案。",
+            parameters=[
+                ToolParameter(
+                    name="signals",
+                    type="string",
+                    description="逗号分隔的搜索关键词 (如错误类型、模块名)",
+                ),
+            ],
+        )
+
+    async def execute(self, **kwargs: Any) -> ToolResult:
+        signals = [s.strip() for s in str(kwargs.get("signals", "")).split(",") if s.strip()]
+        if not signals:
+            return ToolResult(success=False, output="", error="搜索关键词不能为空")
+        try:
+            assets = await self._fetcher.search_by_signals(signals)
+            out = "\n".join(
+                f"- {a.get('asset_id', '')}: {a.get('summary', '')}" for a in assets[:10]
+            )
+            return ToolResult(success=True, output=out or "未找到匹配方案", error=None)
+        except Exception as e:
+            return ToolResult(success=False, output="", error=f"搜索失败: {e}")
+
+
+class EvoMapBountyTool(Tool):
+    """查看和认领 EvoMap 赏金任务。"""
+
+    def __init__(self, bounty: BountyManager) -> None:
+        self._bounty = bounty
+
+    @property
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name="evomap_bounty",
+            description="列出/认领/完成 EvoMap 赏金任务。",
+            parameters=[
+                ToolParameter(
+                    name="action",
+                    type="string",
+                    description="list | claim | complete | my_tasks",
+                ),
+                ToolParameter(
+                    name="task_id",
+                    type="string",
+                    description="任务 ID (claim/complete 时必填)",
+                    required=False,
+                ),
+                ToolParameter(
+                    name="asset_id",
+                    type="string",
+                    description="完成时提交的 asset_id",
+                    required=False,
+                ),
+            ],
+        )
+
+    async def execute(self, **kwargs: Any) -> ToolResult:
+        action = str(kwargs.get("action", "list"))
+        try:
+            if action == "list":
+                tasks = await self._bounty.list_tasks()
+                out = "\n".join(f"- {t.task_id}: {t.title}" for t in tasks[:20])
+                return ToolResult(success=True, output=out or "暂无可用任务", error=None)
+            if action == "claim":
+                tid = kwargs.get("task_id")
+                if not tid:
+                    return ToolResult(success=False, output="", error="需要 task_id")
+                await self._bounty.claim_task(str(tid))
+                return ToolResult(success=True, output=f"任务 {tid} 已认领", error=None)
+            if action == "complete":
+                tid = kwargs.get("task_id")
+                aid = kwargs.get("asset_id")
+                if not tid or not aid:
+                    return ToolResult(success=False, output="", error="需要 task_id 和 asset_id")
+                await self._bounty.complete_task(str(tid), str(aid))
+                return ToolResult(success=True, output=f"任务 {tid} 已提交完成", error=None)
+            if action == "my_tasks":
+                tasks = await self._bounty.my_tasks()
+                out = "\n".join(f"- {t.task_id}: {t.title}" for t in tasks[:20])
+                return ToolResult(success=True, output=out or "无已认领任务", error=None)
+            return ToolResult(success=False, output="", error=f"未知操作: {action}")
+        except Exception as e:
+            return ToolResult(success=False, output="", error=f"赏金操作失败: {e}")
+
+
+class EvoMapPlugin(WhaleclawPlugin):
+    """EvoMap 协作进化市场插件。"""
+
+    def __init__(self) -> None:
+        self._client: A2AClient | None = None
+        self._publisher: AssetPublisher | None = None
+        self._fetcher: AssetFetcher | None = None
+        self._bounty: BountyManager | None = None
+
+    @property
+    def id(self) -> str:
+        return "evomap"
+
+    @property
+    def name(self) -> str:
+        return "EvoMap"
+
+    def _build_components(self, api: WhaleclawPluginApi) -> EvoMapConfig | None:
+        cfg = EvoMapConfig(
+            enabled=api.get_config("enabled", False),
+            hub_url=api.get_config("hub_url", "https://evomap.ai"),
+            auto_fetch=api.get_config("auto_fetch", True),
+            auto_publish=api.get_config("auto_publish", False),
+            sync_interval_hours=api.get_config("sync_interval_hours", 4.0),
+            webhook_url=api.get_config("webhook_url"),
+            min_confidence_to_publish=api.get_config("min_confidence_to_publish", 0.7),
+            auto_search_on_error=api.get_config("auto_search_on_error", True),
+        )
+        if not cfg.enabled:
+            return None
+        identity = EvoMapIdentity()
+        sender_id = identity.get_or_create_sender_id()
+        self._client = A2AClient(cfg.hub_url, sender_id)
+        self._publisher = AssetPublisher(self._client, identity)
+        self._fetcher = AssetFetcher(self._client)
+        self._bounty = BountyManager(self._client)
+        return cfg
+
+    def register(self, api: WhaleclawPluginApi) -> None:
+        cfg = self._build_components(api)
+        if not cfg:
+            return
+        assert self._publisher and self._fetcher and self._bounty
+        api.register_tool(EvoMapPublishTool(self._publisher))
+        api.register_tool(EvoMapFetchTool(self._fetcher))
+        api.register_tool(EvoMapBountyTool(self._bounty))
+        api.register_hook(HookPoint.ON_ERROR, self._on_error_search)
+        api.register_hook(HookPoint.AFTER_TOOL_CALL, self._on_tool_success_publish)
+
+    async def _on_error_search(self, ctx: HookContext) -> HookResult:
+        if not self._fetcher:
+            return HookResult(proceed=True, data=ctx.data)
+        err = ctx.data.get("error") or ctx.data.get("error_type") or ""
+        signals = [err] if err else []
+        if signals:
+            try:
+                assets = await self._fetcher.search_by_signals(signals)
+                if assets:
+                    ctx.data["evomap_suggestions"] = assets[:3]
+            except Exception:
+                pass
+        return HookResult(proceed=True, data=ctx.data)
+
+    async def _on_tool_success_publish(self, ctx: HookContext) -> HookResult:
+        return HookResult(proceed=True, data=ctx.data)
+
+    async def on_start(self) -> None:
+        if not self._client or not self._fetcher:
+            return
+        try:
+            await self._client.hello()
+            await self._fetcher.fetch_promoted()
+        except Exception:
+            pass
+
+
+def plugin() -> EvoMapPlugin:
+    """Plugin entry point for loader."""
+    return EvoMapPlugin()

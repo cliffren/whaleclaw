@@ -1,0 +1,120 @@
+"""WebSocket message protocol definitions."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from enum import StrEnum
+from typing import Any
+from uuid import uuid4
+
+from pydantic import BaseModel, Field
+
+
+class MessageType(StrEnum):
+    """WebSocket message types."""
+
+    MESSAGE = "message"
+    STREAM = "stream"
+    ERROR = "error"
+    PING = "ping"
+    PONG = "pong"
+    TOOL_CALL = "tool_call"
+    TOOL_RESULT = "tool_result"
+    THINKING = "thinking"
+    STATUS = "status"
+    CANVAS_PUSH = "canvas_push"
+    CANVAS_RESET = "canvas_reset"
+    CANVAS_EVENT = "canvas_event"
+
+
+class WSMessage(BaseModel):
+    """A single WebSocket protocol message."""
+
+    type: MessageType
+    id: str = Field(default_factory=lambda: uuid4().hex)
+    session_id: str | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+def make_stream(session_id: str, content: str) -> WSMessage:
+    """Create a stream chunk message."""
+    return WSMessage(
+        type=MessageType.STREAM,
+        session_id=session_id,
+        payload={"content": content},
+    )
+
+
+def make_message(session_id: str, content: str) -> WSMessage:
+    """Create a final complete message."""
+    return WSMessage(
+        type=MessageType.MESSAGE,
+        session_id=session_id,
+        payload={"content": content},
+    )
+
+
+def make_error(session_id: str | None, error: str) -> WSMessage:
+    """Create an error message."""
+    return WSMessage(
+        type=MessageType.ERROR,
+        session_id=session_id,
+        payload={"error": error},
+    )
+
+
+def make_pong() -> WSMessage:
+    """Create a pong response."""
+    return WSMessage(type=MessageType.PONG)
+
+
+def make_tool_call(session_id: str, name: str, arguments: dict[str, Any]) -> WSMessage:
+    """Create a tool_call notification."""
+    return WSMessage(
+        type=MessageType.TOOL_CALL,
+        session_id=session_id,
+        payload={"name": name, "arguments": arguments},
+    )
+
+
+def make_tool_result(session_id: str, name: str, output: str, success: bool) -> WSMessage:
+    """Create a tool_result notification."""
+    return WSMessage(
+        type=MessageType.TOOL_RESULT,
+        session_id=session_id,
+        payload={"name": name, "output": output, "success": success},
+    )
+
+
+def make_status(session_id: str, text: str) -> WSMessage:
+    """Create a status update message."""
+    return WSMessage(
+        type=MessageType.STATUS,
+        session_id=session_id,
+        payload={"text": text},
+    )
+
+
+def make_canvas_push(
+    session_id: str,
+    html: str,
+    css: str = "",
+    js: str = "",
+    title: str = "",
+) -> WSMessage:
+    """Create a canvas push message."""
+    return WSMessage(
+        type=MessageType.CANVAS_PUSH,
+        session_id=session_id,
+        payload={"html": html, "css": css, "js": js, "title": title},
+    )
+
+
+def make_canvas_reset(session_id: str) -> WSMessage:
+    """Create a canvas reset message."""
+    return WSMessage(
+        type=MessageType.CANVAS_RESET,
+        session_id=session_id,
+        payload={},
+    )
