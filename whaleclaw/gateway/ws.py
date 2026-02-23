@@ -183,6 +183,7 @@ async def websocket_handler(
                     on_tool_call=on_tool_call,
                     on_tool_result=on_tool_result_cb,
                     images=images or None,
+                    session_manager=session_manager,
                 )
                 await session_manager.add_message(session, "assistant", reply)
                 await _safe_send(websocket, make_message(session.id, reply))

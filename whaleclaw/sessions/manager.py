@@ -68,7 +68,18 @@ class SessionManager:
         if not row:
             return None
         msg_rows = await self._store.get_messages(session_id)
-        messages = [Message(role=m.role, content=m.content) for m in msg_rows]  # type: ignore[arg-type]
+        messages: list[Message] = []
+        for m in msg_rows:
+            if m.role == "tool":
+                messages.append(Message(
+                    role="assistant",  # type: ignore[arg-type]
+                    content=m.content,
+                ))
+            else:
+                messages.append(Message(
+                    role=m.role,  # type: ignore[arg-type]
+                    content=m.content,
+                ))
         return Session(
             id=row.id,
             channel=row.channel,
@@ -100,7 +111,8 @@ class SessionManager:
         tool_name: str | None = None,
     ) -> None:
         """Append a message to the session and persist it."""
-        msg = Message(role=role, content=content)  # type: ignore[arg-type]
+        mem_role = "assistant" if role == "tool" else role
+        msg = Message(role=mem_role, content=content)  # type: ignore[arg-type]
         session.messages.append(msg)
         session.updated_at = datetime.now(UTC)
         await self._store.add_message(

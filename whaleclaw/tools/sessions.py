@@ -72,7 +72,17 @@ class SessionsHistoryTool(Tool):
             return ToolResult(success=False, output="", error="会话未找到")
 
         msgs = session.messages[-limit:] if limit > 0 else session.messages
-        lines = [f"[{m.role}]: {m.content}" for m in msgs]
+        lines: list[str] = []
+        for m in msgs:
+            prefix = f"[{m.role}]"
+            if m.tool_calls:
+                tool_names = ", ".join(tc.name for tc in m.tool_calls)
+                lines.append(f"{prefix}: (调用工具: {tool_names}) {m.content or ''}")
+            elif m.tool_call_id:
+                snippet = m.content[:200] if m.content else ""
+                lines.append(f"{prefix}: [工具结果] {snippet}")
+            else:
+                lines.append(f"{prefix}: {m.content}")
         return ToolResult(success=True, output="\n".join(lines) if lines else "无消息")
 
 

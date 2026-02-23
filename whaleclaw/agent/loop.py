@@ -207,6 +207,27 @@ def _strip_tool_json(text: str) -> str:
     return cleaned.strip()
 
 
+async def _persist_message(
+    manager: object,
+    session: Session,
+    role: str,
+    content: str,
+    *,
+    tool_call_id: str | None = None,
+    tool_name: str | None = None,
+) -> None:
+    """Persist a message to session store (best-effort, never raises)."""
+    try:
+        from whaleclaw.sessions.manager import SessionManager
+        if isinstance(manager, SessionManager):
+            await manager.add_message(
+                session, role, content,
+                tool_call_id=tool_call_id, tool_name=tool_name,
+            )
+    except Exception as exc:
+        log.debug("agent.persist_failed", error=str(exc))
+
+
 async def _execute_tool(
     registry: ToolRegistry,
     tc: ToolCall,
@@ -255,6 +276,7 @@ async def run_agent(
     on_tool_call: OnToolCall | None = None,
     on_tool_result: OnToolResult | None = None,
     images: list[ImageContent] | None = None,
+    session_manager: object | None = None,
 ) -> str:
     """Run the Agent loop with tool support and multi-turn context.
 
@@ -285,15 +307,14 @@ async def run_agent(
         conversation = list(session.messages)
     conversation.append(Message(role="user", content=message, images=images))
 
-    budget = _context_window.compute_budget(
-        model_id.split("/", 1)[-1] if "/" in model_id else model_id
-    )
+    model_short = model_id.split("/", 1)[-1] if "/" in model_id else model_id
 
     log.info(
         "agent.run",
         model=model_id,
         session_id=session_id,
         native_tools=native_tools,
+        history_messages=len(conversation),
     )
 
     final_text_parts: list[str] = []
@@ -304,7 +325,7 @@ async def run_agent(
 
     for round_idx in range(_MAX_TOOL_ROUNDS):
         all_messages = _context_window.trim(
-            [*system_messages, *conversation], budget
+            [*system_messages, *conversation], model_short,
         )
 
         response: AgentResponse = await router.chat(
@@ -348,12 +369,22 @@ async def run_agent(
             tools=[tc.name for tc in tool_calls],
         )
 
+        tool_names_str = ", ".join(tc.name for tc in tool_calls)
+        assistant_content = response.content or ""
+        assistant_persist = (
+            f"(调用工具: {tool_names_str}) {assistant_content}".strip()
+            if not assistant_content
+            else assistant_content
+        )
         assistant_msg = Message(
             role="assistant",
-            content=response.content or "",
+            content=assistant_content,
             tool_calls=tool_calls if native_tools else None,
         )
         conversation.append(assistant_msg)
+
+        if session_manager and session:
+            await _persist_message(session_manager, session, "assistant", assistant_persist)
 
         for tc in tool_calls:
             tc_id, result = await _execute_tool(
@@ -366,10 +397,12 @@ async def run_agent(
                 ):
                     real_image_paths.append(path_match.group(1))
 
+            tool_output = _format_tool_output(result)
+
             if native_tools:
                 tool_msg = Message(
                     role="tool",
-                    content=_format_tool_output(result),
+                    content=tool_output,
                     tool_call_id=tc_id,
                 )
             else:
@@ -377,10 +410,19 @@ async def run_agent(
                     role="user",
                     content=(
                         f"[工具 {tc.name} 执行结果]\n"
-                        f"{_format_tool_output(result)}"
+                        f"{tool_output}"
                     ),
                 )
             conversation.append(tool_msg)
+
+            if session_manager and session:
+                snippet = tool_output[:500] if len(tool_output) > 500 else tool_output
+                await _persist_message(
+                    session_manager, session, "tool",
+                    f"[{tc.name}] {snippet}",
+                    tool_call_id=tc_id, tool_name=tc.name,
+                )
+
             log.debug(
                 "agent.tool_result",
                 tool=tc.name,
