@@ -59,6 +59,7 @@ fi
 
 echo ""
 echo "  🐋 WhaleClaw Gateway 正在启动..."
+echo "  🎉 B站飞翔鲸祝您马年大吉！财源广进！WhaleClaw 免费开源！"
 echo "  ─────────────────────────────────"
 echo ""
 echo "  🌐 WebChat:  http://${BIND}:${PORT}"

@@ -1091,6 +1091,14 @@ body {
   color: #fff;
 }
 
+.setting-footer-note {
+  margin-top: 18px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
 /* ── Scrollbar ── */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }

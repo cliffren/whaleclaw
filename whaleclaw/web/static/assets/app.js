@@ -1125,6 +1125,10 @@ createApp({
         <div v-if="token" class="setting-group" style="margin-top:24px;border-top:1px solid var(--border);padding-top:16px">
           <button class="btn-logout" @click="doLogout">退出登录</button>
         </div>
+        <div class="setting-footer-note">
+          B站飞翔鲸祝您马年大吉！财源广进！<br>
+          WhaleClaw 免费开源！
+        </div>
       </div>
 
       <!-- Skill Detail Modal -->

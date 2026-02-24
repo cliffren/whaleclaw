@@ -162,10 +162,9 @@ PYEOF
 eval "$(read_status)"
 
 show_menu() {
-    clear
-    echo ""
     echo "  ═══════════════════════════════════════════════════"
     echo "  🐋 WhaleClaw 配置管理"
+    echo "  🎉 B站飞翔鲸祝您马年大吉！财源广进！WhaleClaw 免费开源！"
     echo "  ═══════════════════════════════════════════════════"
     echo ""
     echo "  📁 配置文件: $CONFIG_FILE"

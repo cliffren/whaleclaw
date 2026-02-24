@@ -74,3 +74,24 @@ WhaleClaw 不是对 OpenClaw 的否定，而是针对“长期运行成本与本
 - 提供更直接的可操作接口与前端设置入口。  
 
 再次感谢 OpenClaw 社区提供的优秀基础与启发。
+
+注：飞书机器人权限，直接复制粘贴即可
+{
+  "scopes": {
+    "tenant": [
+      "cardkit:card:write",
+      "contact:contact.base:readonly",
+      "contact:user.employee_id:readonly",
+      "im:message",
+      "im:message.group_at_msg:readonly",
+      "im:message.group_msg",
+      "im:message.p2p_msg:readonly",
+      "im:message.reactions:write_only",
+      "im:message:readonly",
+      "im:message:send_as_bot",
+      "im:message:send_sys_msg",
+      "im:resource"
+    ],
+    "user": []
+  }
+}
