@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
@@ -21,6 +22,8 @@ from whaleclaw.gateway.protocol import (
     make_tool_call,
     make_tool_result,
 )
+from whaleclaw.plugins.evomap.bridge import build_memory_hint_from_hook_data
+from whaleclaw.plugins.hooks import HookContext, HookManager, HookPoint
 from whaleclaw.providers.base import ImageContent
 from whaleclaw.providers.router import ModelRouter
 from whaleclaw.sessions.manager import Session, SessionManager
@@ -92,6 +95,7 @@ async def websocket_handler(
     session_manager: SessionManager,
     registry: ToolRegistry,
     memory_manager: MemoryManager | None = None,
+    hook_manager: HookManager | None = None,
 ) -> None:
     """Handle a single WebSocket connection lifecycle."""
     await websocket.accept()
@@ -151,7 +155,7 @@ async def websocket_handler(
         while ws_alive:
             try:
                 incoming = await asyncio.wait_for(inbox.get(), timeout=1.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
 
             session = await _resolve_session(
@@ -218,6 +222,23 @@ async def websocket_handler(
                     )
 
             try:
+                extra_memory = ""
+                if hook_manager is not None:
+                    hook_out = await hook_manager.run(
+                        HookPoint.BEFORE_MESSAGE,
+                        HookContext(
+                            hook=HookPoint.BEFORE_MESSAGE,
+                            session_id=session.id,
+                            data={
+                                "message": content,
+                                "channel": "webchat",
+                            },
+                        ),
+                    )
+                    if not hook_out.proceed:
+                        await _safe_send(websocket, make_message(session.id, "消息被策略阻止。"))
+                        continue
+                    extra_memory = build_memory_hint_from_hook_data(hook_out.data)
                 reply = await run_agent(
                     message=content or "(用户发送了图片)",
                     session_id=session.id,
@@ -232,10 +253,25 @@ async def websocket_handler(
                     session_manager=session_manager,
                     session_store=_store,
                     memory_manager=memory_manager,
+                    extra_memory=extra_memory,
                 )
                 await session_manager.add_message(session, "assistant", reply)
                 await _safe_send(websocket, make_message(session.id, reply))
             except Exception as exc:
+                if hook_manager is not None:
+                    with suppress(Exception):
+                        await hook_manager.run(
+                            HookPoint.ON_ERROR,
+                            HookContext(
+                                hook=HookPoint.ON_ERROR,
+                                session_id=session.id,
+                                data={
+                                    "error": str(exc),
+                                    "message": content,
+                                    "channel": "webchat",
+                                },
+                            ),
+                        )
                 log.error(
                     "agent.error",
                     error=str(exc),

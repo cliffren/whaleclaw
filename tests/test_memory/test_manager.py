@@ -92,8 +92,8 @@ def test_recall_policy_intent_levels(manager: MemoryManager) -> None:
     assert raw is True
 
     should2, raw2 = manager.recall_policy("你好")
-    assert should2 is False
-    assert raw2 is False
+    assert should2 is True
+    assert raw2 is True
 
 
 @pytest.mark.asyncio
@@ -136,6 +136,19 @@ class _FakeRouter:
         return AgentResponse(content=json.dumps(payload, ensure_ascii=False), model=model_id)
 
 
+class _FakeRuleRouter:
+    def __init__(self, payload: dict[str, object]) -> None:
+        self._payload = payload
+
+    async def chat(self, model_id: str, messages: list[object], **kwargs: object) -> AgentResponse:  # noqa: ARG002
+        return AgentResponse(content=json.dumps(self._payload, ensure_ascii=False), model=model_id)
+
+
+class _FakeCompressRouter:
+    async def chat(self, model_id: str, messages: list[object], **kwargs: object) -> AgentResponse:  # noqa: ARG002
+        return AgentResponse(content="压缩后画像", model=model_id)
+
+
 @pytest.mark.asyncio
 async def test_organize_if_needed_generates_profile(
     manager: MemoryManager, store: SimpleMemoryStore
@@ -174,6 +187,49 @@ async def test_organize_if_needed_generates_profile(
 
 
 @pytest.mark.asyncio
+async def test_recall_includes_latest_l0_and_l1_profiles(
+    manager: MemoryManager, store: SimpleMemoryStore
+) -> None:
+    await store.add(
+        "用户长期偏好：回答先给结论。",
+        source="memory_organizer",
+        tags=["memory_profile", "level:L0", "curated"],
+    )
+    await store.add(
+        "PPT制作规则：封面图与内容页布局不同，内容页图片保持统一尺寸。",
+        source="memory_organizer",
+        tags=["memory_profile", "level:L1", "curated"],
+    )
+
+    recalled = await manager.recall(
+        "帮我做PPT",
+        max_tokens=500,
+        include_profile=True,
+        include_raw=False,
+    )
+    assert "长期记忆画像" in recalled
+    assert "长期记忆细节" in recalled
+    assert "PPT制作规则" in recalled
+
+
+@pytest.mark.asyncio
+async def test_build_profile_for_injection_compresses_even_when_short(
+    manager: MemoryManager, store: SimpleMemoryStore
+) -> None:
+    await store.add(
+        "用户长期偏好：回答先给结论。",
+        source="memory_organizer",
+        tags=["memory_profile", "level:L0", "curated"],
+    )
+    out = await manager.build_profile_for_injection(
+        max_tokens=1600,
+        router=_FakeCompressRouter(),  # type: ignore[arg-type]
+        model_id="zhipu/glm-4.7-flash",
+    )
+    assert out == "压缩后画像"
+
+
+@pytest.mark.asyncio
 async def test_set_and_clear_global_style_directive(
     manager: MemoryManager, store: SimpleMemoryStore
 ) -> None:
@@ -195,3 +251,28 @@ async def test_set_and_clear_global_style_directive(
     assert await manager.get_global_style_directive() == ""
     recent = await store.list_recent(limit=20)
     assert not any("style:global" in e.tags for e in recent)
+
+
+@pytest.mark.asyncio
+async def test_upsert_profile_from_capture_appends_rule_to_single_layer(
+    manager: MemoryManager, store: SimpleMemoryStore
+) -> None:
+    await store.add(
+        "用户偏好：回答简洁。",
+        source="memory_organizer",
+        tags=["memory_profile", "level:L0", "curated"],
+    )
+    router = _FakeRuleRouter({"accept": True, "layer": "L1", "rule": "PPT 内容页图片尺寸统一"})
+    ok = await manager.upsert_profile_from_capture(
+        "做PPT时内容页图片尺寸统一",
+        router=router,  # type: ignore[arg-type]
+        model_id="qwen/qwen3.5-plus",
+        max_tokens=1600,
+    )
+    assert ok is True
+    recent = await store.list_recent(limit=20)
+    l1 = next(
+        e for e in recent
+        if "memory_profile" in e.tags and "level:L1" in e.tags
+    )
+    assert "PPT 内容页图片尺寸统一" in l1.content

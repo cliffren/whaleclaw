@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 import time
 from collections.abc import AsyncIterator
@@ -25,6 +26,7 @@ from whaleclaw.gateway.protocol import make_message
 from whaleclaw.gateway.ws import push_to_session, websocket_handler
 from whaleclaw.memory.manager import MemoryManager
 from whaleclaw.memory.vector import SimpleMemoryStore
+from whaleclaw.plugins.hooks import HookManager
 from whaleclaw.plugins.loader import PluginLoader
 from whaleclaw.plugins.registry import PluginRegistry
 from whaleclaw.sessions.manager import SessionManager
@@ -64,10 +66,10 @@ def create_app(config: WhaleclawConfig) -> FastAPI:
                 if isinstance(mgr, SessionManager):
                     s = await mgr.get(session_id)
                     if s and s.channel == "feishu" and feishu_channel.client:
-                        from whaleclaw.channels.feishu.card import FeishuCard
-                        card = FeishuCard.text_card(content)
                         await feishu_channel.client.send_message(
-                            s.peer_id, "interactive", card,
+                            s.peer_id,
+                            "text",
+                            json.dumps({"text": content}, ensure_ascii=False),
                         )
 
             mgr = state.get("manager")
@@ -78,6 +80,7 @@ def create_app(config: WhaleclawConfig) -> FastAPI:
 
     cron_scheduler = CronScheduler(on_fire=_on_cron_fire)
     plugin_registry = PluginRegistry()
+    hook_manager = HookManager()
 
     feishu_channel: Any = None
 
@@ -85,6 +88,7 @@ def create_app(config: WhaleclawConfig) -> FastAPI:
         "manager": None,
         "registry": None,
         "memory_manager": None,
+        "hook_manager": hook_manager,
     }
 
     @asynccontextmanager
@@ -109,7 +113,7 @@ def create_app(config: WhaleclawConfig) -> FastAPI:
             memory_store=memory_store,
         )
 
-        await _load_plugins(config, registry, plugin_registry)
+        await _load_plugins(config, registry, plugin_registry, hook_manager)
         state["registry"] = registry
 
         await plugin_registry.start_all()
@@ -125,7 +129,11 @@ def create_app(config: WhaleclawConfig) -> FastAPI:
             await feishu_channel.start()
             if feishu_channel.bot is not None:
                 feishu_channel.bot.bind_agent(
-                    config, manager, registry, memory_manager=memory_manager
+                    config,
+                    manager,
+                    registry,
+                    memory_manager=memory_manager,
+                    hook_manager=hook_manager,
                 )
 
         _UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -158,6 +166,11 @@ def create_app(config: WhaleclawConfig) -> FastAPI:
         mgr = state["memory_manager"]
         assert isinstance(mgr, MemoryManager), "App not started"
         return mgr
+
+    def _hook_manager() -> HookManager:
+        hm = state["hook_manager"]
+        assert isinstance(hm, HookManager), "App not started"
+        return hm
 
     app = FastAPI(
         title="WhaleClaw Gateway",
@@ -566,6 +579,7 @@ def create_app(config: WhaleclawConfig) -> FastAPI:
             session_manager=_mgr(),
             registry=_tool_registry(),
             memory_manager=_memory_manager(),
+            hook_manager=_hook_manager(),
         )
 
     # ── Static files & SPA fallback ────────────────────────
@@ -601,6 +615,7 @@ async def _load_plugins(
     config: WhaleclawConfig,
     tool_registry: ToolRegistry,
     plugin_registry: PluginRegistry,
+    hook_manager: HookManager,
 ) -> None:
     """Discover, load, and register all plugins."""
     from whaleclaw.plugins.sdk import WhaleclawPluginApi
@@ -630,7 +645,7 @@ async def _load_plugins(
                 get_secret_fn=lambda pid, key: None,
                 channel_register_fn=lambda ch: None,
                 tool_register_fn=lambda t: tool_registry.register(t),
-                hook_register_fn=lambda h, cb, p: None,
+                hook_register_fn=lambda h, cb, p: hook_manager.register(h, cb, p),
                 command_register_fn=lambda cmd, handler: None,
             )
             plugin.register(api)

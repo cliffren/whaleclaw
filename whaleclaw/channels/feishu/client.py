@@ -123,14 +123,14 @@ class FeishuClient:
         return data.get("data", {}).get("file_key", "")
 
     async def download_resource(
-        self, message_id: str, file_key: str
+        self, message_id: str, file_key: str, *, resource_type: str = "file"
     ) -> bytes:
         token = await self._ensure_token()
         async with httpx.AsyncClient(timeout=self._timeout) as client:
             resp = await client.get(
                 f"{_BASE}/im/v1/messages/{message_id}/resources/{file_key}",
                 headers={"Authorization": f"Bearer {token}"},
-                params={"type": "file"},
+                params={"type": resource_type},
             )
         return resp.content
 

@@ -23,6 +23,15 @@ def _est_tokens(text: str) -> int:
     return max(0, len(text) // 3)
 
 
+def _truncate_to_tokens(text: str, max_tokens: int) -> str:
+    if max_tokens <= 0:
+        return ""
+    char_cap = max_tokens * 3
+    if len(text) <= char_cap:
+        return text
+    return text[:char_cap]
+
+
 def _normalize_text(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip().lower()
 
@@ -180,38 +189,9 @@ class MemoryManager:
         low = query.lower().strip()
         if not low:
             return (False, False)
-
-        trigger_keywords = (
-            "继续",
-            "上次",
-            "之前",
-            "还记得",
-            "记得",
-            "偏好",
-            "风格",
-            "叫我",
-            "默认",
-            "沿用",
-            "照旧",
-            "continue",
-            "as before",
-            "remember",
-            "preference",
-        )
-        strong_keywords = (
-            "继续做",
-            "继续上次",
-            "按上次",
-            "根据之前",
-            "还记得我",
-            "you remember",
-            "from last time",
-            "as we decided",
-            "as before",
-        )
-        should = any(k in low for k in trigger_keywords)
-        include_raw = any(k in low for k in strong_keywords)
-        return (should, include_raw)
+        # Always-on recall for non-empty user turns:
+        # profile + raw retrieval are gated by scoring/budget downstream.
+        return (True, True)
 
     async def recall(
         self,
@@ -234,12 +214,30 @@ class MemoryManager:
                 ),
                 None,
             )
-            if latest_l0 is not None:
-                txt = f"【长期记忆画像】\n{latest_l0.content}"
+            latest_l1 = next(
+                (
+                    e
+                    for e in recent
+                    if _is_profile_entry(e) and any(t == "level:L1" for t in e.tags)
+                ),
+                None,
+            )
+            for title, entry in (
+                ("【长期记忆画像】", latest_l0),
+                ("【长期记忆细节】", latest_l1),
+            ):
+                if entry is None:
+                    continue
+                content = entry.content.strip()
+                if not content:
+                    continue
+                txt = f"{title}\n{content}"
                 need = _est_tokens(txt)
                 if used + need <= max_tokens:
                     parts.append(txt)
                     used += need
+                else:
+                    break
 
         if include_raw:
             results = await self._store.search(query, limit=limit * 3, min_score=0.2)
@@ -254,24 +252,179 @@ class MemoryManager:
                 ),
                 reverse=True,
             )
-            emitted_norm: set[str] = set()
             for r in ranked:
-                if len(emitted_norm) >= limit:
+                if len(parts) >= limit + (1 if include_profile else 0):
                     break
                 content = r.entry.content.strip()
                 if _is_low_signal_text(content):
-                    continue
-                norm = _normalize_text(content)
-                if norm in emitted_norm:
                     continue
                 txt = f"- {content}"
                 need = _est_tokens(txt)
                 if used + need > max_tokens:
                     break
-                emitted_norm.add(norm)
                 parts.append(txt)
                 used += need
         return "\n".join(parts) if parts else ""
+
+    async def build_profile_for_injection(
+        self,
+        *,
+        max_tokens: int,
+        router: ModelRouter | None = None,
+        model_id: str = "",
+    ) -> str:
+        """Build profile injection text from latest L0/L1, compressing by LLM if needed."""
+        recent = await self._store.list_recent(limit=300)
+        latest_l0 = next(
+            (
+                e
+                for e in recent
+                if _is_profile_entry(e) and any(t == "level:L0" for t in e.tags)
+            ),
+            None,
+        )
+        latest_l1 = next(
+            (
+                e
+                for e in recent
+                if _is_profile_entry(e) and any(t == "level:L1" for t in e.tags)
+            ),
+            None,
+        )
+        blocks: list[str] = []
+        if latest_l0 and latest_l0.content.strip():
+            blocks.append(f"【长期记忆画像】\n{latest_l0.content.strip()}")
+        if latest_l1 and latest_l1.content.strip():
+            blocks.append(f"【长期记忆细节】\n{latest_l1.content.strip()}")
+        if not blocks:
+            return ""
+
+        profile_text = "\n\n".join(blocks)
+        if router and model_id:
+            compressed = await self._compress_profile_with_llm(
+                router=router,
+                model_id=model_id,
+                profile_text=profile_text,
+                max_tokens=max_tokens,
+            )
+            if compressed:
+                return compressed
+
+        # Fallback: keep original if within budget, otherwise physical truncation.
+        if _est_tokens(profile_text) <= max_tokens:
+            return profile_text
+        return _truncate_to_tokens(profile_text, max_tokens)
+
+    async def _compress_profile_with_llm(
+        self,
+        *,
+        router: ModelRouter,
+        model_id: str,
+        profile_text: str,
+        max_tokens: int,
+    ) -> str:
+        """Compress combined L0/L1 profile while preserving actionable rules."""
+        sys_prompt = (
+            "你是记忆注入压缩器。请把输入的长期记忆压缩成更短版本。"
+            "保留所有可执行规则、约束、优先级和关键身份信息。"
+            "禁止新增事实。输出纯文本，不要 JSON。"
+        )
+        user_prompt = (
+            f"目标上限约 {max_tokens} tokens。\n"
+            "输入记忆如下：\n"
+            f"{profile_text}\n\n"
+            "请输出压缩版。"
+        )
+        try:
+            response = await router.chat(
+                model_id,
+                [
+                    Message(role="system", content=sys_prompt),
+                    Message(role="user", content=user_prompt),
+                ],
+            )
+        except Exception:
+            return ""
+        txt = response.content.strip()
+        if not txt:
+            return ""
+        if _est_tokens(txt) <= max_tokens:
+            return txt
+        return _truncate_to_tokens(txt, max_tokens)
+
+    async def upsert_profile_from_capture(
+        self,
+        content: str,
+        *,
+        router: ModelRouter,
+        model_id: str,
+        max_tokens: int = 1600,
+        keep_profile_versions: int = 3,
+    ) -> bool:
+        """Fallback profile update: classify new captured rule into L0/L1 and append."""
+        text = content.strip()
+        if len(text) < 6:
+            return False
+
+        sys_prompt = (
+            "你是长期画像规则分类器。"
+            "判断新输入是否是可执行的长期规则。"
+            "若是，选择唯一层级 L0 或 L1（不要双层）。"
+            "输出 JSON: {accept:boolean, layer:\"L0|L1\", rule:string}。"
+            "rule 必须精炼可执行，不超过 80 字。"
+        )
+        user_prompt = f"输入：{text}"
+        try:
+            resp = await router.chat(
+                model_id,
+                [
+                    Message(role="system", content=sys_prompt),
+                    Message(role="user", content=user_prompt),
+                ],
+            )
+        except Exception:
+            return False
+
+        obj = _extract_json_block(resp.content)
+        if obj is None:
+            return False
+        accept = bool(obj.get("accept", False))
+        layer = str(obj.get("layer", "")).strip().upper()
+        rule = str(obj.get("rule", "")).strip()
+        if not accept or layer not in {"L0", "L1"} or not rule:
+            return False
+
+        recent = await self._store.list_recent(limit=300)
+        latest_l0 = next(
+            (
+                e
+                for e in recent
+                if _is_profile_entry(e) and any(t == "level:L0" for t in e.tags)
+            ),
+            None,
+        )
+        latest_l1 = next(
+            (
+                e
+                for e in recent
+                if _is_profile_entry(e) and any(t == "level:L1" for t in e.tags)
+            ),
+            None,
+        )
+        target = latest_l0 if layer == "L0" else latest_l1
+        old_text = target.content.strip() if target is not None else ""
+        if old_text and _normalize_text(rule) in _normalize_text(old_text):
+            return False
+        merged = f"{old_text}\n- {rule}".strip() if old_text else rule
+        merged = _truncate_to_tokens(merged, max_tokens)
+
+        await self._store.add(
+            merged,
+            source="memory_fallback",
+            tags=["memory_profile", f"level:{layer}", "curated", "fallback_rule"],
+        )
+        await self._prune_profiles(keep_profile_versions=max(1, keep_profile_versions))
+        return True
 
     async def memorize(
         self, content: str, source: str, tags: list[str] | None = None
@@ -449,6 +602,8 @@ class MemoryManager:
             "其中 l0 最多 120 字，l1 最多 800 字，"
             "style_directive 是可选的全局回复风格指令（最多120字，纯行为约束，不含任务事实）。"
             "keep/drop 是字符串数组（用于解释保留/丢弃依据，简短即可）。"
+            "规则分层要求：高频全局规则放到 l0，细节规则放到 l1。"
+            "同一条规则只能出现在一个层级，不要在 l0 和 l1 重复。"
         )
         user_prompt = (
             "历史 L1 画像（可能为空）：\n"

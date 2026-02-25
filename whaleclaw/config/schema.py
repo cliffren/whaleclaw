@@ -83,19 +83,19 @@ class AgentMemoryConfig(BaseModel):
     enabled: bool = True
     auto_capture_mode: Literal["conservative", "balanced", "aggressive"] = "balanced"
     recall_limit: int = 8
-    recall_max_tokens: int = 600
-    recall_profile_max_tokens: int = 220
-    recall_raw_max_tokens: int = 380
+    recall_max_tokens: int = 1600
+    recall_profile_max_tokens: int = 1600
+    recall_raw_max_tokens: int = 1600
     cooldown_seconds: int = 180
     max_per_hour: int = 12
-    capture_batch_size: int = 3
-    capture_merge_window_seconds: int = 120
+    capture_batch_size: int = 2
+    capture_merge_window_seconds: int = 45
     organizer_enabled: bool = True
     organizer_background: bool = True
     global_style_enabled: bool = True
     organizer_model: str = "zhipu/glm-4.7-flash"
-    organizer_min_new_entries: int = 5
-    organizer_interval_seconds: int = 900
+    organizer_min_new_entries: int = 3
+    organizer_interval_seconds: int = 180
     organizer_max_raw_window: int = 120
     keep_profile_versions: int = 3
     max_raw_entries: int = 800
@@ -171,3 +171,4 @@ class WhaleclawConfig(BaseModel):
     channels: ChannelsConfig = Field(default_factory=ChannelsConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     routing: RoutingConfig = Field(default_factory=RoutingConfig)
+    plugins: dict[str, dict[str, object]] = Field(default_factory=dict)

@@ -214,8 +214,14 @@ class OpenAICompatProvider(LLMProvider):
 
                             usage = event.get("usage")
                             if usage:
-                                input_tokens = usage.get("prompt_tokens", input_tokens)
-                                output_tokens = usage.get("completion_tokens", output_tokens)
+                                input_tokens = usage.get(
+                                    "prompt_tokens",
+                                    usage.get("input_tokens", input_tokens),
+                                )
+                                output_tokens = usage.get(
+                                    "completion_tokens",
+                                    usage.get("output_tokens", output_tokens),
+                                )
                                 if input_tokens == 0 and output_tokens == 0:
                                     total = usage.get("total_tokens", 0)
                                     if total > 0:

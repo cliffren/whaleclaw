@@ -698,6 +698,16 @@ class _DummyMemoryManager:
             return self._recalled
         return self._recalled
 
+    async def build_profile_for_injection(  # noqa: PLR0913
+        self,
+        *,
+        max_tokens: int,  # noqa: ARG002
+        router: Any = None,  # noqa: ARG002
+        model_id: str = "",  # noqa: ARG002
+    ) -> str:
+        self.recall_calls += 1
+        return "【长期记忆画像】\n用户偏好简洁。"
+
     async def auto_capture_user_message(  # noqa: PLR0913
         self,
         content: str,
@@ -858,3 +868,108 @@ async def test_run_agent_injects_global_style_directive() -> None:
         m.role == "system" and "全局回复风格偏好" in m.content
         for m in captured_messages
     )
+
+
+@pytest.mark.asyncio
+async def test_run_agent_injects_external_memory_hint() -> None:
+    captured_messages: list[Any] = []
+
+    async def fake_chat(
+        model_id: str,  # noqa: ARG001
+        messages: list[Any],
+        *,
+        tools: Any = None,  # noqa: ARG001
+        on_stream: Any = None,  # noqa: ARG001
+    ) -> AgentResponse:
+        captured_messages[:] = messages
+        return AgentResponse(content="ok", model="test-model")
+
+    router = _make_router(chat_fn=fake_chat)
+    memory: Any = _DummyMemoryManager()
+    cfg = WhaleclawConfig()
+    cfg.agent.memory.organizer_background = False
+
+    _ = await run_agent(
+        message="帮我优化这个脚本",
+        session_id="test-external-memory",
+        config=cfg,
+        router=router,
+        memory_manager=memory,
+        extra_memory="【EvoMap 协作经验候选】\n- 遇到超时优先增加重试和退避",
+    )
+
+    assert any(
+        m.role == "system" and "协作网络的外部经验候选" in m.content
+        for m in captured_messages
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_agent_truncates_external_memory_when_compressor_unavailable() -> None:
+    captured_messages: list[Any] = []
+
+    async def fake_chat(
+        model_id: str,  # noqa: ARG001
+        messages: list[Any],
+        *,
+        tools: Any = None,  # noqa: ARG001
+        on_stream: Any = None,  # noqa: ARG001
+    ) -> AgentResponse:
+        captured_messages[:] = messages
+        return AgentResponse(content="ok", model="test-model")
+
+    router = _make_router(chat_fn=fake_chat)
+    router.resolve = MagicMock(side_effect=RuntimeError("compress model missing"))
+    cfg = WhaleclawConfig()
+    cfg.agent.memory.organizer_background = False
+
+    huge = "X" * 12000
+    _ = await run_agent(
+        message="测试外部经验注入",
+        session_id="test-external-memory-truncate",
+        config=cfg,
+        router=router,
+        extra_memory=huge,
+    )
+
+    ext_msg = next(
+        m for m in captured_messages
+        if m.role == "system" and "协作网络的外部经验候选" in m.content
+    )
+    assert ext_msg.content.count("X") <= 3000
+
+
+@pytest.mark.asyncio
+async def test_run_agent_compresses_external_memory_even_when_short() -> None:
+    captured_messages: list[Any] = []
+
+    async def fake_chat(
+        model_id: str,  # noqa: ARG001
+        messages: list[Any],
+        *,
+        tools: Any = None,  # noqa: ARG001
+        on_stream: Any = None,  # noqa: ARG001
+    ) -> AgentResponse:
+        if messages and messages[0].role == "system" and "外部经验压缩器" in messages[0].content:
+            return AgentResponse(content="压缩后经验", model="compress-model")
+        captured_messages[:] = messages
+        return AgentResponse(content="ok", model="test-model")
+
+    router = _make_router(chat_fn=fake_chat)
+    cfg = WhaleclawConfig()
+    cfg.agent.summarizer.enabled = False
+
+    _ = await run_agent(
+        message="测试短经验压缩",
+        session_id="test-external-memory-short-compress",
+        config=cfg,
+        router=router,
+        extra_memory="【EvoMap 协作经验候选】\n- 原始经验文本",
+    )
+
+    ext_msg = next(
+        m for m in captured_messages
+        if m.role == "system" and "协作网络的外部经验候选" in m.content
+    )
+    assert "压缩后经验" in ext_msg.content
+    assert "原始经验文本" not in ext_msg.content

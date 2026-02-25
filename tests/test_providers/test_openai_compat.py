@@ -10,9 +10,9 @@ from unittest.mock import patch
 import httpx
 import pytest
 
-from whaleclaw.providers.base import Message
-from whaleclaw.providers.base import ToolCall
+from whaleclaw.providers.base import Message, ToolCall
 from whaleclaw.providers.openai import OpenAIProvider
+from whaleclaw.providers.qwen import QwenProvider
 from whaleclaw.types import ProviderAuthError, ProviderError
 
 
@@ -148,6 +148,34 @@ async def test_network_retry_then_success(provider: OpenAIProvider) -> None:
 
 
 @pytest.mark.asyncio
+async def test_streaming_usage_input_output_fields(provider: OpenAIProvider) -> None:
+    lines = [
+        "data: " + json.dumps({
+            "choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}],
+            "usage": {"input_tokens": 7, "output_tokens": 4},
+        }),
+        "data: [DONE]",
+    ]
+    fake = _FakeClient(_FakeResponse(200, lines))
+    with patch("whaleclaw.providers.openai_compat.httpx.AsyncClient", return_value=fake):
+        result = await provider.chat([Message(role="user", content="hi")], "gpt-5.2")
+
+    assert result.input_tokens == 7
+    assert result.output_tokens == 4
+
+
+def test_qwen_build_body_enables_stream_usage() -> None:
+    provider = QwenProvider(api_key="test-key")
+    body = provider._build_body(
+        [Message(role="user", content="hi")],
+        "qwen3.5-plus",
+        None,
+    )
+    assert body["stream"] is True
+    assert body["stream_options"] == {"include_usage": True}
+
+
+@pytest.mark.asyncio
 async def test_oauth_rejects_non_gpt52_model() -> None:
     provider = OpenAIProvider(
         auth_mode="oauth",
@@ -228,7 +256,10 @@ async def test_oauth_responses_moves_system_to_instructions() -> None:
     fake = _RouteClient(routes)
     with patch("whaleclaw.providers.openai.httpx.AsyncClient", return_value=fake):
         _ = await provider.chat(
-            [Message(role="system", content="你是一个中文助手"), Message(role="user", content="hi")],
+            [
+                Message(role="system", content="你是一个中文助手"),
+                Message(role="user", content="hi"),
+            ],
             "gpt-5.2",
         )
 
@@ -268,7 +299,13 @@ async def test_oauth_responses_omits_function_call_id_field() -> None:
                 Message(
                     role="assistant",
                     content="",
-                    tool_calls=[ToolCall(id="call_abc", name="bash", arguments={"command": "echo 1"})],
+                    tool_calls=[
+                        ToolCall(
+                            id="call_abc",
+                            name="bash",
+                            arguments={"command": "echo 1"},
+                        )
+                    ],
                 ),
                 Message(role="tool", content="1", tool_call_id="call_abc"),
                 Message(role="user", content="继续"),

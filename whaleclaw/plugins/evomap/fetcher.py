@@ -14,8 +14,9 @@ class AssetFetcher:
 
     CACHE_DIR = Path("~/.whaleclaw/evomap/assets/").expanduser()
 
-    def __init__(self, client: A2AClient) -> None:
+    def __init__(self, client: A2AClient, cache_dir: Path | None = None) -> None:
         self._client = client
+        self.CACHE_DIR = cache_dir or self.CACHE_DIR
         self.CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
     def _cache_path(self, asset_id: str) -> Path:
@@ -52,6 +53,42 @@ class AssetFetcher:
             if match:
                 result.append(asset)
         return result
+
+    def search_cached_by_signals(
+        self,
+        signals: list[str],
+        *,
+        limit: int = 3,
+    ) -> list[dict[str, Any]]:
+        """Search local cached assets by signal/summary text without network I/O."""
+        clean = [s.strip().lower() for s in signals if s.strip()]
+        if not clean:
+            return []
+
+        results: list[dict[str, Any]] = []
+        for path in sorted(self.CACHE_DIR.glob("*.json"), reverse=True):
+            try:
+                asset = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if not isinstance(asset, dict):
+                continue
+
+            trigger = asset.get("trigger", [])
+            trigger_set = {
+                str(t).strip().lower()
+                for t in trigger
+                if str(t).strip()
+            }
+            hay = " ".join(
+                str(asset.get(k, ""))
+                for k in ("title", "summary", "description")
+            ).lower()
+            if any((sig in trigger_set) or (sig in hay) for sig in clean):
+                results.append(asset)
+            if len(results) >= max(1, limit):
+                break
+        return results
 
     def get_cached(self, asset_id: str) -> dict[str, Any] | None:
         """Load asset from local cache."""

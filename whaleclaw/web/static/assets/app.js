@@ -528,6 +528,28 @@ createApp({
             toolCalls: [],
           });
           scrollToBottom();
+        } else if (msg.type === 'status') {
+          const text = msg.payload?.text || '';
+          const model = msg.payload?.model || '';
+          const sid = msg.session_id || activeSessionId.value;
+          if (model) {
+            if (sid && sid === activeSessionId.value) {
+              currentModel.value = model;
+            }
+            const s = sessions.value.find((x) => x.id === sid);
+            if (s) s.model = model;
+          }
+          if (text && sid && sid === activeSessionId.value) {
+            messages.value.push({
+              id: `status-${Date.now()}`,
+              role: 'assistant',
+              content: text,
+              rendered: renderMarkdown(text),
+              toolCalls: [],
+            });
+            _bumpMessageCount();
+            scrollToBottom();
+          }
         }
       };
 

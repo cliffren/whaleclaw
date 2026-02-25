@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from whaleclaw.plugins.evomap.bounty import BountyManager
@@ -192,6 +193,7 @@ class EvoMapPlugin(WhaleclawPlugin):
         self._publisher: AssetPublisher | None = None
         self._fetcher: AssetFetcher | None = None
         self._bounty: BountyManager | None = None
+        self._cfg: EvoMapConfig | None = None
 
     @property
     def id(self) -> str:
@@ -214,6 +216,7 @@ class EvoMapPlugin(WhaleclawPlugin):
         )
         if not cfg.enabled:
             return None
+        self._cfg = cfg
         identity = EvoMapIdentity()
         sender_id = identity.get_or_create_sender_id()
         self._client = A2AClient(cfg.hub_url, sender_id)
@@ -230,8 +233,31 @@ class EvoMapPlugin(WhaleclawPlugin):
         api.register_tool(EvoMapPublishTool(self._publisher))
         api.register_tool(EvoMapFetchTool(self._fetcher))
         api.register_tool(EvoMapBountyTool(self._bounty))
+        api.register_hook(HookPoint.BEFORE_MESSAGE, self._on_before_message_suggest)
         api.register_hook(HookPoint.ON_ERROR, self._on_error_search)
         api.register_hook(HookPoint.AFTER_TOOL_CALL, self._on_tool_success_publish)
+
+    async def _on_before_message_suggest(self, ctx: HookContext) -> HookResult:
+        if not self._fetcher:
+            return HookResult(proceed=True, data=ctx.data)
+        text = str(ctx.data.get("message", "")).strip()
+        if len(text) < 6:
+            return HookResult(proceed=True, data=ctx.data)
+
+        terms = [w.lower() for w in re.findall(r"[\w\u4e00-\u9fff]+", text) if len(w) >= 2]
+        if not terms:
+            return HookResult(proceed=True, data=ctx.data)
+        signals = terms[:8]
+
+        assets = self._fetcher.search_cached_by_signals(signals, limit=4)
+        if not assets and self._cfg and self._cfg.auto_search_on_error:
+            try:
+                assets = await self._fetcher.search_by_signals(signals[:3])
+            except Exception:
+                assets = []
+        if assets:
+            ctx.data["evomap_suggestions"] = assets[:4]
+        return HookResult(proceed=True, data=ctx.data)
 
     async def _on_error_search(self, ctx: HookContext) -> HookResult:
         if not self._fetcher:
@@ -242,7 +268,7 @@ class EvoMapPlugin(WhaleclawPlugin):
             try:
                 assets = await self._fetcher.search_by_signals(signals)
                 if assets:
-                    ctx.data["evomap_suggestions"] = assets[:3]
+                    ctx.data["evomap_suggestions"] = assets[:4]
             except Exception:
                 pass
         return HookResult(proceed=True, data=ctx.data)
