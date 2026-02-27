@@ -27,8 +27,10 @@ class PromptLayer(StrEnum):
     LAZY = "lazy"
 
 
-_STATIC_PROMPT = """\
-你是 WhaleClaw，一个运行在用户本地电脑上的 AI 助手。
+_DEFAULT_ASSISTANT_NAME = "WhaleClaw"
+
+_STATIC_PROMPT_TEMPLATE = """\
+你是 {assistant_name}，一个运行在用户本地电脑上的 AI 助手。
 - 使用用户的语言回复，简洁准确
 - 你拥有多种工具（bash、文件读写、浏览器、定时任务、技能管理等），能做就做，不要说"我无法"
 - 用 bash 执行网络请求时，curl 必须加 --connect-timeout 5 --max-time 15 防止卡住
@@ -40,7 +42,8 @@ _STATIC_PROMPT = """\
 - 运行 Python 脚本时使用 python3 命令（不要用 python3 -c，脚本长度会被截断）
 - 需要生成文件（PPT/Excel/PDF等）时：先用 file_write 写 .py 脚本到 /tmp/，再用 bash 执行
 - 如果你的技能不够好，可以用 skill(action="search", query="关键词") 搜索 GitHub 上更好的技能并安装
-- **禁止自我否定已完成的工作**：如果你之前已经成功调用工具生成了文件，不要说"我之前没有真正执行"或"我一直在空谈"。工具调用成功就是成功，直接告诉用户文件路径即可
+- **禁止自我否定已完成的工作**：如果你之前已经成功调用工具生成了文件，
+  不要说"我之前没有真正执行"或"我一直在空谈"。工具调用成功就是成功，直接告诉用户文件路径即可
 - 用户说"改一下"时，只修改用户指出的问题，不要推翻重做整个任务"""
 
 _TOOL_FALLBACK_HEADER = """\
@@ -89,6 +92,7 @@ class PromptAssembler:
         *,
         token_budget: int | None = None,
         tool_fallback_text: str = "",
+        assistant_name: str = _DEFAULT_ASSISTANT_NAME,
     ) -> list[Message]:
         """Assemble system prompt messages.
 
@@ -99,7 +103,7 @@ class PromptAssembler:
             tool_fallback_text: Tool descriptions for providers without
                 native tools support. Injected into prompt when non-empty.
         """
-        parts: list[str] = [self._build_static(config)]
+        parts: list[str] = [self._build_static(config, assistant_name)]
 
         dynamic = self._build_dynamic(user_message, _DYNAMIC_BUDGET)
         if dynamic:
@@ -122,9 +126,10 @@ class PromptAssembler:
 
         return messages
 
-    def _build_static(self, config: WhaleclawConfig) -> str:
+    def _build_static(self, config: WhaleclawConfig, assistant_name: str) -> str:
         """Static layer — core identity (~150 tokens), cacheable."""
-        return _STATIC_PROMPT
+        safe_name = assistant_name.strip() or _DEFAULT_ASSISTANT_NAME
+        return _STATIC_PROMPT_TEMPLATE.format(assistant_name=safe_name)
 
     def _build_dynamic(self, user_message: str, budget: int) -> str:
         """Dynamic layer — skills routed by user message keywords."""

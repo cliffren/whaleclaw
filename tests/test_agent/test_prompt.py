@@ -29,3 +29,12 @@ class TestPromptAssembler:
         assembler = PromptAssembler()
         tokens = assembler.estimate_tokens("hello world")
         assert tokens > 0
+
+    def test_build_supports_custom_assistant_name(self) -> None:
+        assembler = PromptAssembler()
+        messages = assembler.build(
+            WhaleclawConfig(),
+            "你好",
+            assistant_name="旺财",
+        )
+        assert "你是 旺财" in messages[0].content

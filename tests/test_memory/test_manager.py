@@ -247,6 +247,24 @@ async def test_set_and_clear_global_style_directive(
 
 
 @pytest.mark.asyncio
+async def test_set_get_and_clear_assistant_name(
+    manager: MemoryManager, store: SimpleMemoryStore
+) -> None:
+    changed = await manager.set_assistant_name("旺财", source="test")
+    assert changed is True
+    assert await manager.get_assistant_name() == "旺财"
+
+    changed2 = await manager.set_assistant_name("旺财", source="test")
+    assert changed2 is False
+
+    removed = await manager.clear_assistant_name()
+    assert removed >= 1
+    assert await manager.get_assistant_name() == ""
+    recent = await store.list_recent(limit=20)
+    assert not any("identity:name" in e.tags for e in recent)
+
+
+@pytest.mark.asyncio
 async def test_upsert_profile_from_capture_appends_rule_to_single_layer(
     manager: MemoryManager, store: SimpleMemoryStore
 ) -> None:

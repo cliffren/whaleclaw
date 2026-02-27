@@ -49,8 +49,19 @@ _memory_organizer_tasks: dict[str, asyncio.Task[None]] = {}
 _MAX_OUTPUT_TOKENS = 200_000
 _EVOMAP_MAX_TOKENS = 1000
 _EXTRA_MEMORY_COMPRESS_TIMEOUT_SECONDS = 8
+_DEFAULT_ASSISTANT_NAME = "WhaleClaw"
 
 _IMG_MD_RE = re.compile(r"!\[([^\]]*)\]\((/[^)]+)\)")
+_ASSISTANT_NAME_RESET_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"恢复默认名字"),
+    re.compile(r"改回\s*whaleclaw", re.IGNORECASE),
+    re.compile(r"还是叫\s*whaleclaw", re.IGNORECASE),
+)
+_ASSISTANT_NAME_SET_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"(?:以后|从现在起|今后|之后|开始)\s*(?:你|机器人|助手)?\s*(?:就)?(?:叫|改叫|改名叫)\s*([^\s，。！？!?、,]{1,24})"),
+    re.compile(r"(?:把你|你)\s*(?:改名|改名为|名字改成|名字改为)\s*([^\s，。！？!?、,]{1,24})"),
+    re.compile(r"^\s*(?:你|助手|机器人)\s*(?:就)?叫\s*([^\s，。！？!?、,]{1,24})\s*$"),
+)
 
 _TOOL_HINTS: dict[str, str] = {
     "browser": "搜索相关资料",
@@ -91,6 +102,41 @@ def _preview_text(text: str, limit: int = 80) -> str:
     if len(compact) <= limit:
         return compact
     return compact[:limit] + "..."
+
+
+def _sanitize_assistant_name(raw: str) -> str:
+    name = raw.strip().strip("\"'“”‘’「」[]()（）")
+    if not name:
+        return ""
+    if any(ch in name for ch in ("?", "？", "!", "！", "吗")):
+        return ""
+    low = name.lower()
+    if low in {"什么", "啥", "name", "名字"}:
+        return ""
+    if "什么" in name:
+        return ""
+    if len(name) > 24:
+        return ""
+    if not re.fullmatch(r"[\w\u4e00-\u9fff·\-.]{1,24}", name):
+        return ""
+    return name
+
+
+def _detect_assistant_name_update(message: str) -> tuple[str, str]:
+    text = message.strip()
+    if not text:
+        return ("none", "")
+    for p in _ASSISTANT_NAME_RESET_PATTERNS:
+        if p.search(text):
+            return ("reset", "")
+    for p in _ASSISTANT_NAME_SET_PATTERNS:
+        m = p.search(text)
+        if not m:
+            continue
+        name = _sanitize_assistant_name(m.group(1))
+        if name:
+            return ("set", name)
+    return ("none", "")
 
 
 def _normalize_for_match(text: str) -> str:
@@ -742,6 +788,52 @@ async def run_agent(
     if registry is None:
         registry = create_default_registry()
 
+    assistant_name = _DEFAULT_ASSISTANT_NAME
+    if memory_manager is not None:
+        try:
+            current_name = await memory_manager.get_assistant_name()
+            if current_name:
+                assistant_name = current_name
+        except Exception as exc:
+            log.debug("agent.assistant_name_load_failed", session_id=session_id, error=str(exc))
+    name_action, requested_name = _detect_assistant_name_update(message)
+    if name_action == "set":
+        assistant_name = requested_name
+        if memory_manager is not None:
+            try:
+                changed = await memory_manager.set_assistant_name(
+                    requested_name,
+                    source=f"session:{session_id}",
+                )
+                if changed:
+                    log.info(
+                        "agent.assistant_name_updated",
+                        session_id=session_id,
+                        assistant_name=requested_name,
+                    )
+            except Exception as exc:
+                log.debug(
+                    "agent.assistant_name_save_failed",
+                    session_id=session_id,
+                    error=str(exc),
+                )
+    elif name_action == "reset":
+        assistant_name = _DEFAULT_ASSISTANT_NAME
+        if memory_manager is not None:
+            try:
+                removed = await memory_manager.clear_assistant_name()
+                log.info(
+                    "agent.assistant_name_reset",
+                    session_id=session_id,
+                    removed=removed,
+                )
+            except Exception as exc:
+                log.debug(
+                    "agent.assistant_name_reset_failed",
+                    session_id=session_id,
+                    error=str(exc),
+                )
+
     native_tools = router.supports_native_tools(model_id)
     selected_tool_names: set[str] | None = None
     if native_tools:
@@ -762,7 +854,7 @@ async def run_agent(
     fallback_text = "" if native_tools else registry.to_prompt_fallback()
 
     system_messages = _assembler.build(
-        config, message, tool_fallback_text=fallback_text
+        config, message, tool_fallback_text=fallback_text, assistant_name=assistant_name
     )
     import time as _time
 

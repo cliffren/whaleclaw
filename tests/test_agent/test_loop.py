@@ -217,6 +217,27 @@ class _BashProbeTool(Tool):
         return ToolResult(success=False, output="", error="bad command")
 
 
+class _NameMemoryManager:
+    def __init__(self, name: str = "") -> None:
+        self.name = name
+        self.set_calls = 0
+        self.clear_calls = 0
+
+    async def get_assistant_name(self) -> str:
+        return self.name
+
+    async def set_assistant_name(self, name: str, *, source: str = "manual") -> bool:  # noqa: ARG002
+        self.name = name
+        self.set_calls += 1
+        return True
+
+    async def clear_assistant_name(self) -> int:
+        old = 1 if self.name else 0
+        self.name = ""
+        self.clear_calls += 1
+        return old
+
+
 @pytest.mark.asyncio
 async def test_run_agent_tool_call_loop() -> None:
     """Agent should execute tools and loop back to LLM."""
@@ -275,6 +296,65 @@ async def test_run_agent_tool_call_loop() -> None:
     assert call_count == 2
     assert tool_calls_seen == ["echo"]
     assert tool_results_seen == [True]
+
+
+@pytest.mark.asyncio
+async def test_run_agent_updates_assistant_name_from_user_message() -> None:
+    async def fake_chat(
+        model_id: str,  # noqa: ARG001
+        messages: list[Any],
+        *,
+        tools: Any = None,  # noqa: ARG001
+        on_stream: Any = None,  # noqa: ARG001
+    ) -> AgentResponse:
+        system_text = messages[0].content if messages else ""
+        return AgentResponse(content=system_text, model="test-model")
+
+    cfg = WhaleclawConfig()
+    cfg.agent.memory.enabled = False
+    mm = _NameMemoryManager()
+    router = _make_router(chat_fn=fake_chat)
+
+    result = await run_agent(
+        message="以后你叫旺财",
+        session_id="test-rename",
+        config=cfg,
+        router=router,
+        memory_manager=mm,  # type: ignore[arg-type]
+    )
+
+    assert "你是 旺财" in result
+    assert mm.name == "旺财"
+    assert mm.set_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_run_agent_does_not_rename_on_plain_name_question() -> None:
+    async def fake_chat(
+        model_id: str,  # noqa: ARG001
+        messages: list[Any],
+        *,
+        tools: Any = None,  # noqa: ARG001
+        on_stream: Any = None,  # noqa: ARG001
+    ) -> AgentResponse:
+        system_text = messages[0].content if messages else ""
+        return AgentResponse(content=system_text, model="test-model")
+
+    cfg = WhaleclawConfig()
+    cfg.agent.memory.enabled = False
+    mm = _NameMemoryManager("WhaleClaw")
+    router = _make_router(chat_fn=fake_chat)
+
+    result = await run_agent(
+        message="你叫什么名字？",
+        session_id="test-no-rename",
+        config=cfg,
+        router=router,
+        memory_manager=mm,  # type: ignore[arg-type]
+    )
+
+    assert "你是 WhaleClaw" in result
+    assert mm.set_calls == 0
 
 
 @pytest.mark.asyncio

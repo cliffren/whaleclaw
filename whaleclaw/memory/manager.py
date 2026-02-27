@@ -55,6 +55,10 @@ def _is_style_profile_entry(entry: MemoryEntry) -> bool:
     return _is_profile_entry(entry) and _has_tag(entry, "style:global")
 
 
+def _is_identity_name_entry(entry: MemoryEntry) -> bool:
+    return _is_profile_entry(entry) and _has_tag(entry, "identity:name")
+
+
 def _split_query_terms(text: str) -> set[str]:
     return {w.lower() for w in re.findall(r"[\w\u4e00-\u9fff]+", text) if len(w) >= 2}
 
@@ -690,6 +694,43 @@ class MemoryManager:
                 removed += 1
         return removed
 
+    async def get_assistant_name(self) -> str:
+        entries = await self._store.list_recent(limit=200)
+        item = next((e for e in entries if _is_identity_name_entry(e)), None)
+        if item is None:
+            return ""
+        return item.content.strip()
+
+    async def set_assistant_name(
+        self,
+        name: str,
+        *,
+        source: str = "manual",
+    ) -> bool:
+        text = name.strip()
+        if not text:
+            return False
+        current = await self.get_assistant_name()
+        if current and _normalize_text(current) == _normalize_text(text):
+            return False
+        await self._store.add(
+            text[:40],
+            source=source,
+            tags=["memory_profile", "identity:name", "curated", "manual_override"],
+        )
+        await self._prune_identity_names(keep_versions=5)
+        return True
+
+    async def clear_assistant_name(self) -> int:
+        entries = await self._store.list_recent(limit=500)
+        names = [e for e in entries if _is_identity_name_entry(e)]
+        removed = 0
+        for entry in names:
+            ok = await self._store.delete(entry.id)
+            if ok:
+                removed += 1
+        return removed
+
     async def _prune_profiles(self, keep_profile_versions: int) -> None:
         entries = await self._store.list_recent(limit=1000)
         # Keep only recent L1 profiles; legacy L0 profiles are removed.
@@ -717,4 +758,10 @@ class MemoryManager:
         entries = await self._store.list_recent(limit=500)
         styles = [e for e in entries if _is_style_profile_entry(e)]
         for stale in styles[max(1, keep_versions):]:
+            await self._store.delete(stale.id)
+
+    async def _prune_identity_names(self, keep_versions: int) -> None:
+        entries = await self._store.list_recent(limit=500)
+        names = [e for e in entries if _is_identity_name_entry(e)]
+        for stale in names[max(1, keep_versions):]:
             await self._store.delete(stale.id)
