@@ -114,8 +114,8 @@ def create_app(config: WhaleclawConfig) -> FastAPI:
 
         manager = SessionManager(store, config)
         state["manager"] = manager
-        memory_store = SimpleMemoryStore(persist_dir=MEMORY_DIR)
-        memory_manager = MemoryManager(memory_store)
+        memory_store = SimpleMemoryStore(persist_dir=MEMORY_DIR, use_embedding=True)
+        memory_manager = MemoryManager(memory_store, smart_prune=True)
         state["memory_manager"] = memory_manager
 
         registry = create_default_registry(
