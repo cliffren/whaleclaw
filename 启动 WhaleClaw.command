@@ -4,6 +4,10 @@
 # ═══════════════════════════════════════════════
 cd "$(dirname "$0")"
 
+# 支持多实例部署: 通过 WHALECLAW_HOME 指定独立数据目录
+WHALECLAW_HOME="${WHALECLAW_HOME:-$HOME/.whaleclaw}"
+export WHALECLAW_HOME
+
 if [ -f "/Users/rentao/miniconda3/envs/whaleclaw/bin/python" ]; then
     PYTHON="/Users/rentao/miniconda3/envs/whaleclaw/bin/python"
 elif [ -f "./python/bin/python3.12" ]; then
@@ -35,14 +39,14 @@ fi
 if ! "$PYTHON" -c "import whaleclaw" 2>/dev/null; then
     echo ""
     echo "  📦 首次运行，正在安装依赖..."
-    "$PYTHON" -m pip install -e ".[dev]" --quiet
+    "$PYTHON" -m pip install -e ".[dev,embedding]" --quiet
     echo "  ✅ 依赖安装完成"
 fi
 
 # 读取端口和绑定地址（从配置文件）
 eval $("$PYTHON" -c "
-import json, pathlib
-p = pathlib.Path.home() / '.whaleclaw/whaleclaw.json'
+import json, pathlib, os
+p = pathlib.Path(os.environ.get('WHALECLAW_HOME', pathlib.Path.home() / '.whaleclaw')) / 'whaleclaw.json'
 port, bind = 18666, '127.0.0.1'
 if p.exists():
     cfg = json.loads(p.read_text())
