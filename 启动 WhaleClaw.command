@@ -4,7 +4,13 @@
 # ═══════════════════════════════════════════════
 cd "$(dirname "$0")"
 
-PYTHON="./python/bin/python3.12"
+if [ -f "/Users/rentao/miniconda3/envs/whaleclaw/bin/python" ]; then
+    PYTHON="/Users/rentao/miniconda3/envs/whaleclaw/bin/python"
+elif [ -f "./python/bin/python3.12" ]; then
+    PYTHON="./python/bin/python3.12"
+else
+    PYTHON="python"
+fi
 
 # 自动检测本地代理（用于访问海外 API）
 if [ -z "$https_proxy" ]; then

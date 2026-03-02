@@ -182,12 +182,21 @@ def _infer_style_from_l0(l0: str) -> str:
 
 
 class MemoryManager:
-    """Orchestrates recall and storage with token budget."""
+    """Orchestrates recall and storage with token budget.
 
-    def __init__(self, store: MemoryStore) -> None:
+    Args:
+        store: The underlying memory store implementation.
+        smart_prune: When ``True``, prune raw entries by
+            ``importance * recency`` instead of purely by time.
+            Default ``False`` preserves the legacy behaviour.
+    """
+
+    def __init__(self, store: MemoryStore, *, smart_prune: bool = False) -> None:
         self._store = store
+        self._smart_prune = smart_prune
         self._summarizer = ConversationSummarizer()
         self._pending_by_source: dict[str, list[str]] = defaultdict(list)
+        self._pending_importance: dict[str, float] = {}
         self._pending_since: dict[str, datetime] = {}
         self._pending_last_flush: dict[str, datetime] = {}
         self._profile_compress_cache: dict[str, str] = {}
@@ -469,6 +478,15 @@ class MemoryManager:
         if not _matches_capture_signal(text, mode):
             return False
 
+        # Compute importance based on signal strength (used by smart_prune).
+        importance = 0.5
+        if _is_force_flush_capture(text):
+            importance = 0.9
+        elif _style_signal_hits(text) >= 2:
+            importance = 0.8
+        elif _style_signal_hits(text) >= 1:
+            importance = 0.65
+
         now = datetime.now(UTC)
         recent = await self._store.list_recent(limit=200)
         pending_norms = {
@@ -509,6 +527,9 @@ class MemoryManager:
                 continue
             seen_new.add(norm)
             self._pending_by_source[source].append(fact)
+            self._pending_importance[source] = max(
+                self._pending_importance.get(source, 0.0), importance,
+            )
             self._pending_since.setdefault(source, now)
             pending += 1
 
@@ -557,11 +578,13 @@ class MemoryManager:
                 seen.add(norm)
                 dedup.append(item)
 
+            imp = self._pending_importance.pop(src, 0.5)
             for item in dedup:
                 await self._store.add(
                     item,
                     source=src,
                     tags=["auto_capture", f"mode:{mode}", "batched"],
+                    importance=imp,
                 )
                 written += 1
             self._pending_by_source[src].clear()
@@ -751,8 +774,25 @@ class MemoryManager:
     async def _prune_raw(self, max_raw_entries: int) -> None:
         entries = await self._store.list_recent(limit=max_raw_entries * 4)
         raws = [e for e in entries if _is_raw_entry(e)]
-        for stale in raws[max_raw_entries:]:
-            await self._store.delete(stale.id)
+        if len(raws) <= max_raw_entries:
+            return
+
+        if self._smart_prune:
+            # Weighted eviction: keep entries with highest importance × recency.
+            now = datetime.now(UTC)
+            scored = sorted(
+                raws,
+                key=lambda e: e.importance * _recency_score(e.created_at, now),
+                reverse=True,
+            )
+            keep_ids = {e.id for e in scored[:max_raw_entries]}
+            for e in raws:
+                if e.id not in keep_ids:
+                    await self._store.delete(e.id)
+        else:
+            # Legacy: pure time-based eviction (list_recent already sorted).
+            for stale in raws[max_raw_entries:]:
+                await self._store.delete(stale.id)
 
     async def _prune_style_profiles(self, keep_versions: int) -> None:
         entries = await self._store.list_recent(limit=500)

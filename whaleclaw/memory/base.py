@@ -33,7 +33,14 @@ class MemoryStore(ABC):
     """Abstract memory storage backend."""
 
     @abstractmethod
-    async def add(self, content: str, source: str, tags: list[str] | None = None) -> MemoryEntry:
+    async def add(
+        self,
+        content: str,
+        source: str,
+        tags: list[str] | None = None,
+        *,
+        importance: float = 0.5,
+    ) -> MemoryEntry:
         """Add a memory entry."""
 
     @abstractmethod

@@ -31,6 +31,9 @@ dev = [
     "pytest-mock>=3.14",
     "httpx[http2]>=0.28",
 ]
+embedding = [
+    "fastembed>=0.4",
+]
 
 [project.scripts]
 whaleclaw = "whaleclaw.cli.main:app"
