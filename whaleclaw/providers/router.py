@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from whaleclaw.config.schema import ModelsConfig, ProviderConfig
 from whaleclaw.providers.anthropic import AnthropicProvider
+from whaleclaw.providers.bailian import BailianProvider
 from whaleclaw.providers.base import AgentResponse, LLMProvider, Message, ToolSchema
 from whaleclaw.providers.deepseek import DeepSeekProvider
 from whaleclaw.providers.google import GoogleProvider
@@ -28,6 +29,7 @@ _PROVIDER_MAP: dict[str, type[LLMProvider]] = {
     "moonshot": MoonshotProvider,
     "google": GoogleProvider,
     "nvidia": NvidiaProvider,
+    "bailian": BailianProvider,
 }
 
 

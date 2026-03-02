@@ -62,6 +62,7 @@ class ModelsConfig(BaseModel):
     moonshot: ProviderConfig = Field(default_factory=ProviderConfig)
     google: ProviderConfig = Field(default_factory=ProviderConfig)
     nvidia: ProviderConfig = Field(default_factory=ProviderConfig)
+    bailian: ProviderConfig = Field(default_factory=ProviderConfig)
 
 
 class SummarizerConfig(BaseModel):
@@ -133,10 +134,22 @@ class FeishuChannelConfig(BaseModel):
     webhook_path: str = "/webhook/feishu"
 
 
+class TelegramChannelConfig(BaseModel):
+    """Telegram bot channel configuration."""
+
+    bot_token: str = ""
+    mode: Literal["polling", "webhook"] = "polling"
+    webhook_url: str | None = None
+    webhook_path: str = "/webhook/telegram"
+    dm_policy: Literal["open", "closed"] = "open"
+    allowed_user_ids: list[int] = Field(default_factory=list)
+
+
 class ChannelsConfig(BaseModel):
     """Configuration for all message channels."""
 
     feishu: FeishuChannelConfig = Field(default_factory=FeishuChannelConfig)
+    telegram: TelegramChannelConfig = Field(default_factory=TelegramChannelConfig)
 
 
 class SecurityConfig(BaseModel):

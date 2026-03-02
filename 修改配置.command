@@ -66,6 +66,14 @@ if [ ! -f "$CONFIG_FILE" ]; then
       "encrypt_key": null,
       "webhook_path": "/webhook/feishu",
       "dm_policy": "pairing"
+    },
+    "telegram": {
+      "bot_token": "",
+      "mode": "polling",
+      "webhook_url": null,
+      "webhook_path": "/webhook/telegram",
+      "dm_policy": "open",
+      "allowed_user_ids": []
     }
   },
   "security": {
@@ -145,6 +153,18 @@ feishu_mode = feishu.get('mode', 'ws')
 feishu_dm = feishu.get('dm_policy', 'pairing')
 feishu_webhook = feishu.get('webhook_path', '/webhook/feishu')
 
+telegram = cfg.get('channels', {}).get('telegram', {})
+tg_token = telegram.get('bot_token', '')
+if tg_token:
+    tg_preview = tg_token[:8] + '...' + tg_token[-4:] if len(tg_token) > 16 else tg_token
+    tg_status = f'已配置 (Token: {tg_preview})'
+else:
+    tg_status = '未配置'
+tg_mode = telegram.get('mode', 'polling')
+tg_dm = telegram.get('dm_policy', 'open')
+tg_uids = telegram.get('allowed_user_ids', [])
+tg_users = ', '.join(str(u) for u in tg_uids) if tg_uids else '无'
+
 def q(s: str) -> str:
     return "'" + str(s).replace("'", "'\\''") + "'"
 
@@ -162,6 +182,10 @@ print(f'FEISHU_STATUS={q(feishu_status)}')
 print(f'FEISHU_MODE={q(feishu_mode)}')
 print(f'FEISHU_DM={q(feishu_dm)}')
 print(f'FEISHU_WEBHOOK={q(feishu_webhook)}')
+print(f'TG_STATUS={q(tg_status)}')
+print(f'TG_MODE={q(tg_mode)}')
+print(f'TG_DM={q(tg_dm)}')
+print(f'TG_USERS={q(tg_users)}')
 PYEOF
 }
 
@@ -195,6 +219,10 @@ show_menu() {
     echo "  │  飞书渠道: ${FEISHU_STATUS}"
     echo "  │  连接模式: ${FEISHU_MODE}"
     echo "  │  飞书 DM:  ${FEISHU_DM}"
+    echo "  │"
+    echo "  │  Telegram: ${TG_STATUS}"
+    echo "  │  连接模式: ${TG_MODE}"
+    echo "  │  TG DM:    ${TG_DM}"
     echo "  └────────────────────────────────────────┘"
     echo ""
     echo "  ─── 操作菜单 ────────────────────────────"
@@ -205,9 +233,10 @@ show_menu() {
     echo "  4) 设置登录密码"
     echo "  5) 配置上下文压缩"
     echo "  6) 配置飞书渠道"
-    echo "  7) 编辑配置文件 (系统编辑器)"
-    echo "  8) 运行诊断 (doctor)"
-    echo "  9) 查看完整配置"
+    echo "  7) 配置 Telegram 渠道"
+    echo "  8) 编辑配置文件 (系统编辑器)"
+    echo "  9) 运行诊断 (doctor)"
+    echo "  10) 查看完整配置"
     echo "  0) 退出"
     echo ""
 }
@@ -472,6 +501,18 @@ _MODELS_nvidia=(
     "meta/llama-3.1-405b-instruct|Llama 3.1 405B 🔧|off"
 )
 _URL_nvidia="https://integrate.api.nvidia.com/v1"
+
+_MODELS_bailian=(
+    "qwen3.5-plus|Qwen 3.5 Plus|off"
+    "qwen3-max-2026-01-23|Qwen 3 Max|off"
+    "qwen3-coder-next|Qwen 3 Coder Next|off"
+    "qwen3-coder-plus|Qwen 3 Coder Plus|off"
+    "MiniMax-M2.5|MiniMax M2.5|off"
+    "glm-5|GLM-5|off"
+    "glm-4.7|GLM-4.7|off"
+    "kimi-k2.5|Kimi K2.5|off"
+)
+_URL_bailian="https://dashscope.aliyuncs.com/compatible-mode/v1"
 
 # ══════════════════════════════════════════════
 #  通用提供商配置流程
@@ -1089,6 +1130,239 @@ print('  ✅ 飞书 DM 策略已设置为 $dm_val')
 }
 
 # ══════════════════════════════════════════════
+#  配置 Telegram 渠道
+# ══════════════════════════════════════════════
+configure_telegram() {
+    echo ""
+    echo "  ═══ 配置 Telegram 渠道 ═══"
+    echo ""
+    echo "  Telegram 机器人需要先在 @BotFather 创建 Bot 并获取 Token。"
+    echo "  打开 Telegram 搜索 @BotFather → /newbot → 获取 Token"
+    echo ""
+    echo "  ┌─────────────── 当前配置 ───────────────┐"
+    echo "  │  状态:       ${TG_STATUS}"
+    echo "  │  连接模式:   ${TG_MODE} (polling=轮询, webhook=回调)"
+    echo "  │  DM 策略:    ${TG_DM}"
+    echo "  │  允许用户 ID: ${TG_USERS}"
+    echo "  └────────────────────────────────────────┘"
+    echo ""
+    echo "  ─── 操作 ──────────────────────────────"
+    echo ""
+    echo "  1) 设置 Bot Token"
+    echo "  2) 设置 DM 策略"
+    echo "  3) 管理允许用户 ID (白名单)"
+    echo "  4) 清除 Token (关闭 Telegram 渠道)"
+    echo "  0) 返回"
+    echo ""
+    read -p "  选择 [0-4]: " tchoice
+
+    case $tchoice in
+        1)
+            echo ""
+            local saved_token
+            saved_token=$("$PYTHON" -c "
+import json, pathlib, os
+p = pathlib.Path(os.path.expanduser('~/.whaleclaw/whaleclaw.json'))
+cfg = json.loads(p.read_text())
+print(cfg.get('channels', {}).get('telegram', {}).get('bot_token', '') or '')
+" 2>/dev/null)
+
+            if [ -n "$saved_token" ]; then
+                local tk_preview="${saved_token:0:12}...${saved_token: -4}"
+                echo "  已保存的 Bot Token: $tk_preview"
+                read -p "  回车复用，或输入新 Token: " new_token
+                if [ -n "$new_token" ]; then
+                    saved_token="$new_token"
+                fi
+            else
+                read -p "  请输入 Bot Token: " saved_token
+                if [ -z "$saved_token" ]; then
+                    echo "  ⚠️  Token 为空，跳过"
+                    return
+                fi
+            fi
+
+            # 验证 Token 连通性
+            echo ""
+            echo "  ⏳ 验证 Bot Token ..."
+            "$PYTHON" << PYEOF
+import httpx, json, socket, os
+
+token = '''$saved_token'''
+
+def find_proxy():
+    for port in (7897, 7890, 1087, 8080):
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(0.3)
+            s.connect(('127.0.0.1', port))
+            s.close()
+            return f'http://127.0.0.1:{port}'
+        except Exception:
+            pass
+    return None
+
+proxy = os.environ.get('https_proxy') or os.environ.get('HTTP_PROXY') or find_proxy()
+kwargs = {'timeout': 15}
+if proxy:
+    kwargs['proxy'] = proxy
+    print(f'  📡 代理: {proxy}')
+else:
+    print('  📡 直连')
+
+try:
+    with httpx.Client(**kwargs) as client:
+        resp = client.get(f'https://api.telegram.org/bot{token}/getMe')
+    data = resp.json()
+    if data.get('ok'):
+        bot_info = data['result']
+        print(f'  \033[32m✅ 验证成功 — @{bot_info.get("username", "?")} ({bot_info.get("first_name", "")})\033[0m')
+    else:
+        print(f'  \033[31m❌ Token 无效: {data.get("description", "未知错误")}\033[0m')
+        import sys; sys.exit(1)
+except Exception as e:
+    print(f'  \033[31m❌ 连接失败: {e}\033[0m')
+    import sys; sys.exit(1)
+PYEOF
+            local verify_result=$?
+
+            # 保存 Token
+            "$PYTHON" << PYEOF
+import json, pathlib, os
+p = pathlib.Path(os.path.expanduser('~/.whaleclaw/whaleclaw.json'))
+cfg = json.loads(p.read_text())
+tg = cfg.setdefault('channels', {}).setdefault('telegram', {})
+tg['bot_token'] = '''$saved_token'''
+p.write_text(json.dumps(cfg, indent=2, ensure_ascii=False))
+if $verify_result == 0:
+    print('  ✅ Telegram Bot Token 已保存')
+else:
+    print('  ⚠️  Token 已保存但验证失败，请检查网络或 Token')
+print('  ⚠️  需要重启 Gateway 生效')
+PYEOF
+            eval "$(read_status)"
+            ;;
+        2)
+            echo ""
+            echo "  DM 策略控制谁可以与 Bot 对话:"
+            echo ""
+            echo "  a) open   — 任何人可直接对话 (默认)"
+            echo "  b) closed — 仅白名单用户可对话"
+            echo ""
+            read -p "  选择 [a-b]: " dmpolicy
+            local dm_val=""
+            case $dmpolicy in
+                a) dm_val="open" ;;
+                b) dm_val="closed" ;;
+                *) echo "  ❌ 无效选择"; return ;;
+            esac
+            "$PYTHON" -c "
+import json, pathlib, os
+p = pathlib.Path(os.path.expanduser('~/.whaleclaw/whaleclaw.json'))
+cfg = json.loads(p.read_text())
+cfg.setdefault('channels', {}).setdefault('telegram', {})['dm_policy'] = '$dm_val'
+p.write_text(json.dumps(cfg, indent=2, ensure_ascii=False))
+print('  ✅ Telegram DM 策略已设置为 $dm_val')
+"
+            eval "$(read_status)"
+            ;;
+        3)
+            echo ""
+            echo "  当前白名单: ${TG_USERS}"
+            echo ""
+            echo "  a) 添加 User ID"
+            echo "  b) 删除 User ID"
+            echo "  c) 清空白名单"
+            echo "  0) 返回"
+            echo ""
+            read -p "  选择 [a/b/c/0]: " umgmt
+            case $umgmt in
+                a)
+                    echo ""
+                    echo "  如何查找自己的 Telegram User ID:"
+                    echo "  在 Telegram 搜索 @userinfobot 并发送任意消息即可获取"
+                    echo ""
+                    read -p "  请输入要添加的 User ID (数字): " new_uid
+                    if [[ ! "$new_uid" =~ ^[0-9]+$ ]]; then
+                        echo "  ❌ User ID 必须是数字"
+                        break
+                    fi
+                    "$PYTHON" -c "
+import json, pathlib, os
+p = pathlib.Path(os.path.expanduser('~/.whaleclaw/whaleclaw.json'))
+cfg = json.loads(p.read_text())
+tg = cfg.setdefault('channels', {}).setdefault('telegram', {})
+uids = tg.setdefault('allowed_user_ids', [])
+uid = int('$new_uid')
+if uid not in uids:
+    uids.append(uid)
+    tg['dm_policy'] = 'closed'
+    p.write_text(json.dumps(cfg, indent=2, ensure_ascii=False))
+    print(f'  ✅ User ID {uid} 已添加，DM 策略已自动设为 closed')
+else:
+    print(f'  ℹ️  User ID {uid} 已在白名单中')
+"
+                    eval "$(read_status)"
+                    ;;
+                b)
+                    echo ""
+                    echo "  当前白名单: ${TG_USERS}"
+                    read -p "  请输入要删除的 User ID: " del_uid
+                    if [[ ! "$del_uid" =~ ^[0-9]+$ ]]; then
+                        echo "  ❌ User ID 必须是数字"
+                        break
+                    fi
+                    "$PYTHON" -c "
+import json, pathlib, os
+p = pathlib.Path(os.path.expanduser('~/.whaleclaw/whaleclaw.json'))
+cfg = json.loads(p.read_text())
+tg = cfg.setdefault('channels', {}).setdefault('telegram', {})
+uids = tg.get('allowed_user_ids', [])
+uid = int('$del_uid')
+if uid in uids:
+    uids.remove(uid)
+    tg['allowed_user_ids'] = uids
+    p.write_text(json.dumps(cfg, indent=2, ensure_ascii=False))
+    print(f'  ✅ User ID {uid} 已删除')
+else:
+    print(f'  ℹ️  User ID {uid} 不在白名单中')
+"
+                    eval "$(read_status)"
+                    ;;
+                c)
+                    "$PYTHON" -c "
+import json, pathlib, os
+p = pathlib.Path(os.path.expanduser('~/.whaleclaw/whaleclaw.json'))
+cfg = json.loads(p.read_text())
+tg = cfg.setdefault('channels', {}).setdefault('telegram', {})
+tg['allowed_user_ids'] = []
+p.write_text(json.dumps(cfg, indent=2, ensure_ascii=False))
+print('  ✅ 白名单已清空（DM 策略保持不变，下次可手动评估）')
+"
+                    eval "$(read_status)"
+                    ;;
+                0) return ;;
+            esac
+            ;;
+        4)
+            "$PYTHON" -c "
+import json, pathlib, os
+p = pathlib.Path(os.path.expanduser('~/.whaleclaw/whaleclaw.json'))
+cfg = json.loads(p.read_text())
+tg = cfg.setdefault('channels', {}).setdefault('telegram', {})
+tg['bot_token'] = ''
+p.write_text(json.dumps(cfg, indent=2, ensure_ascii=False))
+print('  ✅ Telegram Token 已清除')
+print('  ⚠️  需要重启 Gateway 生效')
+"
+            eval "$(read_status)"
+            ;;
+        0) return ;;
+        *) echo "  ❌ 无效选择" ;;
+    esac
+}
+
+# ══════════════════════════════════════════════
 #  配置 AI 模型 — 选择提供商
 # ══════════════════════════════════════════════
 # ══════════════════════════════════════════════
@@ -1453,10 +1727,11 @@ configure_model() {
     echo "  6) 月之暗面   — kimi-k2.5"
     echo "  7) Google     — Gemini 3 Flash / 3.1 Pro"
     echo "  8) NVIDIA NIM — Qwen 3.5 / GLM / Kimi / Llama"
-    echo "  9) 自定义     — 任意 OpenAI 兼容接口"
+    echo "  9) 阿里百炼   — qwen3.5-plus / qwen3-coder / kimi-k2.5 / glm-5"
+    echo "  10) 自定义    — 任意 OpenAI 兼容接口"
     echo "  0) 返回"
     echo ""
-    read -p "  选择提供商 [0-9]: " provider_choice
+    read -p "  选择提供商 [0-10]: " provider_choice
 
     case $provider_choice in
         1) configure_provider "anthropic" "Anthropic" ;;
@@ -1467,7 +1742,8 @@ configure_model() {
         6) configure_provider "moonshot" "月之暗面" ;;
         7) configure_provider "google" "Google" ;;
         8) configure_provider "nvidia" "NVIDIA NIM" ;;
-        9) configure_custom_provider ;;
+        9) configure_provider "bailian" "阿里百炼" ;;
+        10) configure_custom_provider ;;
         0) return ;;
         *) echo "  ❌ 无效选择" ;;
     esac
@@ -1591,12 +1867,17 @@ print('  ⚠️  需要重启 Gateway 生效')
             read -p "  按回车键继续..."
             ;;
         7)
+            configure_telegram
+            echo ""
+            read -p "  按回车键继续..."
+            ;;
+        8)
             open -t "$CONFIG_FILE"
             echo "  📝 已用系统编辑器打开配置文件"
             echo ""
             read -p "  按回车键继续..."
             ;;
-        8)
+        9)
             echo ""
             "$PYTHON" -c "
 import asyncio
@@ -1612,7 +1893,7 @@ asyncio.run(main())
             echo ""
             read -p "  按回车键继续..."
             ;;
-        9)
+        10)
             echo ""
             echo "  完整配置内容:"
             echo "  ─────────────────────────────────"

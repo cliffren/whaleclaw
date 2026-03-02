@@ -86,6 +86,7 @@ def create_app(config: WhaleclawConfig) -> FastAPI:
     hook_manager = HookManager()
 
     feishu_channel: Any = None
+    telegram_channel: Any = None
 
     state: dict[str, object] = {
         "manager": None,
@@ -224,6 +225,25 @@ def create_app(config: WhaleclawConfig) -> FastAPI:
                     compression_ready_fn=lambda: bool(state["compression_ready"]),
                 )
 
+        nonlocal telegram_channel
+        tg_cfg = config.channels.telegram
+        if tg_cfg.bot_token:
+            from whaleclaw.channels.telegram import TelegramChannel
+            from whaleclaw.channels.telegram.config import TelegramConfig
+
+            telegram_channel = TelegramChannel(TelegramConfig(**tg_cfg.model_dump()))
+            await telegram_channel.start()
+            if telegram_channel.bot is not None:
+                telegram_channel.bot.bind_agent(
+                    config,
+                    manager,
+                    registry,
+                    memory_manager=memory_manager,
+                    hook_manager=hook_manager,
+                    group_compressor=state["group_compressor"],
+                    compression_ready_fn=lambda: bool(state["compression_ready"]),
+                )
+
         _UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
         log.info(
@@ -233,6 +253,8 @@ def create_app(config: WhaleclawConfig) -> FastAPI:
         )
         yield
 
+        if telegram_channel is not None:
+            await telegram_channel.stop()
         if feishu_channel is not None:
             await feishu_channel.stop()
         if prewarm_task is not None and not prewarm_task.done():
@@ -326,7 +348,7 @@ def create_app(config: WhaleclawConfig) -> FastAPI:
 
         all_providers = [
             "anthropic", "openai", "deepseek", "qwen", "zhipu",
-            "minimax", "moonshot", "google", "nvidia",
+            "minimax", "moonshot", "google", "nvidia", "bailian",
         ]
 
         for pname in all_providers:
