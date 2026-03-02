@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
-WHALECLAW_HOME = Path.home() / ".whaleclaw"
+WHALECLAW_HOME = Path(os.path.expanduser(
+    os.environ.get("WHALECLAW_HOME", "~/.whaleclaw")
+))
 CONFIG_FILE = WHALECLAW_HOME / "whaleclaw.json"
 CREDENTIALS_DIR = WHALECLAW_HOME / "credentials"
 SESSIONS_DIR = WHALECLAW_HOME / "sessions"
