@@ -84,29 +84,43 @@ pip install "whaleclaw[embedding]"
 
 ---
 
-## 多实例部署
+## 持久化运行与多实例部署
 
-通过 `WHALECLAW_HOME` 环境变量可在同一台机器上运行多个完全独立的 WhaleClaw 实例。
+WhaleClaw 现在内置了一个脚本，可以一键将其安装为 macOS 的后台进程（通过 `launchctl`），开机自启动并在崩溃时自动重启。
 
-**各实例数据完全隔离：** 配置 / 会话 / 记忆 / 工作目录 / 凭证 / 日志
-
-**正常启动**（使用默认 `~/.whaleclaw`）：
+**正常后台启动（唯一实例）**：
 ```bash
-./启动\ WhaleClaw.command
+./安装后台服务.command
+```
+- 服务名称默认是 `com.whaleclaw.gateway`。
+- 日志文件将保存在 `~/.whaleclaw/logs/` 下。
+
+---
+
+如果希望在同一台机器上运行多个**完全独立**的 WhaleClaw 实例（比如扮演不同角色，绑定不同 Telegram/Feishu 机器人）：
+
+可以通过 `WHALECLAW_HOME` 环境变量指定独立的配置和数据目录。各个实例的配置 / 会话 / 记忆 / 凭证 会完全隔离。
+
+**多实例后台独立部署示例：**
+
+假设我们要创建第二个独立实例（使用当前相同的代码目录）：
+
+```bash
+# 1. 为新实例配置独立的 API 和端口 (例如修改为 18667)
+WHALECLAW_HOME=~/.whaleclaw-instance2 ./修改配置.command
+
+# 2. 将新实例安装为独立的后台服务，指定独一无二的服务名
+WHALECLAW_HOME=~/.whaleclaw-instance2 ./安装后台服务.command com.whaleclaw.instance2
 ```
 
-**启动第二个实例：**
+**管理后台服务**
+部署后，你可以通过 macOS 标准命令进行管理：
 ```bash
-# 1. 先配置第二个实例（会读写 ~/.whaleclaw-bob/）
-WHALECLAW_HOME=~/.whaleclaw-bob ./修改配置.command
+# 查看实例日志
+tail -f ~/.whaleclaw/logs/com.whaleclaw.gateway.out.log
+tail -f ~/.whaleclaw-instance2/logs/com.whaleclaw.instance2.out.log
 
-# 2. 在配置里设置一个不同的端口（默认 18666，改为 18667）
-
-# 3. 启动
-WHALECLAW_HOME=~/.whaleclaw-bob ./启动\ WhaleClaw.command
+# 停止或启动服务
+launchctl unload ~/Library/LaunchAgents/com.whaleclaw.instance2.plist
+launchctl load ~/Library/LaunchAgents/com.whaleclaw.instance2.plist
 ```
-
-**注意事项：**
-- 每个实例需配置不同的 **Gateway 端口**（`修改配置.command` → `3) 修改 Gateway 端口`）
-- 每个 Telegram 实例需要一个独立的 **Bot Token**（一个 Token 只支持一个 polling 连接）
-- `WHALECLAW_HOME` 支持绝对路径和 `~` 前缀路径
