@@ -80,7 +80,9 @@ echo "  按 Ctrl+C 停止服务"
 echo "  ─────────────────────────────────"
 echo ""
 
-# 2 秒后自动打开浏览器
-(sleep 2 && open "http://${BIND}:${PORT}") &
+# 非后台模式下，2 秒后自动打开浏览器
+if [ "$WHALECLAW_NO_BROWSER" != "1" ]; then
+    (sleep 2 && open "http://${BIND}:${PORT}") &
+fi
 
 exec "$PYTHON" -m whaleclaw gateway run
