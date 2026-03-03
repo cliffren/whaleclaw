@@ -98,7 +98,7 @@ class TaskMonitor:
 
     async def _check_all(self) -> None:
         finished = []
-        for task_id, bt in list(self._tasks.items()):
+        for _, bt in list(self._tasks.items()):
             if _is_process_gone(bt.pid):
                 finished.append(bt)
 

@@ -13,7 +13,6 @@ from __future__ import annotations
 import asyncio
 import os
 import uuid
-from pathlib import Path
 from typing import Any
 
 from whaleclaw.config.paths import WHALECLAW_HOME

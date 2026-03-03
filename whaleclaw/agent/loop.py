@@ -12,7 +12,7 @@ path regardless of whether the provider supports native ``tools`` API:
 import asyncio
 import json
 import re
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from whaleclaw.agent.context import OnToolCall, OnToolResult
 from whaleclaw.agent.prompt import PromptAssembler
