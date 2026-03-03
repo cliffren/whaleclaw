@@ -601,10 +601,10 @@ def _format_tool_output(result: ToolResult) -> str:
         
     # Smart output truncation: prevents huge terminal outputs (like `cat pdf`)
     # from blowing up the context window and causing the LLM to get lost.
-    if len(out) > 8000:
-        head = out[:3500]
-        tail = out[-3500:]
-        msg = f"\n\n... [System: Output exceeded 8000 chars. Middle {len(out) - 7000} chars truncated. Use grep/head/tail for details] ...\n\n"
+    if len(out) > 2500:
+        head = out[:1000]
+        tail = out[-1000:]
+        msg = f"\n\n... [System: Output exceeded 2500 chars. Middle {len(out) - 2000} chars truncated. Use grep/head/tail for details] ...\n\n"
         out = head + msg + tail
         
     return out
