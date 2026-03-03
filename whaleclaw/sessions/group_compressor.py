@@ -667,6 +667,7 @@ class SessionGroupCompressor:
             f"目标层级={level}。硬约束：输出必须控制在约{budget} tokens以内"
             f"（中文可参考不超过约{char_hint}字）。"
             "输出纯文本，不要 JSON，不要标题，不要解释。"
+            "【强制约束】：必须完整保留原文中出现过的所有绝对路径（如 /Users/...）、代码片段或关键命令，禁止将其省略或含糊化。"
         )
         user_prompt = (
             f"目标层级: {level}\n"
