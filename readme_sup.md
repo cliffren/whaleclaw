@@ -126,7 +126,7 @@ WhaleClaw 现在内置了一个脚本，可以一键将其安装为 macOS 的后
 
 可以通过 `WHALECLAW_HOME` 环境变量指定独立的配置和数据目录。各个实例的配置 / 会话 / 记忆 / 凭证 会完全隔离。
 
-**多实例后台独立部署示例：**
+**多实例独立部署示例：**
 
 假设我们要创建第二个独立实例（使用当前相同的代码目录）：
 
@@ -137,6 +137,13 @@ WHALECLAW_HOME=~/.whaleclaw-instance2 ./修改配置.command
 # 2. 将新实例安装为独立的后台服务，指定独一无二的服务名
 WHALECLAW_HOME=~/.whaleclaw-instance2 ./安装后台服务.command com.whaleclaw.instance2
 ```
+
+**工作区 (Workspace) 隔离机制**
+为了防止多个实例的 Agent 操作系统文件时发生冲突（例如两个实例同时去写同一个文件），启动脚本默认会把每个实例的当前运行目录 (`cwd`) 强制切换到它自己的配置目录下：
+- 实例 1 的 Bash / Python Agent 会在 `~/.whaleclaw/workspace` 内干活。
+- 实例 2 的 Agent 会在 `~/.whaleclaw-instance2/workspace` 内干活。
+
+这保证了无论多少个 bot 并发运行，它们生成的文件、爬取的数据在物理层都是完全隔离和安全的。
 
 **管理后台服务**
 部署后，你可以通过 macOS 标准命令进行管理：
