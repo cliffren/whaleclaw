@@ -634,15 +634,14 @@ async def _async_format_tool_output(
 """.strip()
 
     try:
-        reply_msg = await asyncio.wait_for(
-            router.call_text(
+        response = await asyncio.wait_for(
+            router.chat(
                 model_id=summarizer_model,
                 messages=[Message(role="user", content=prompt)],
-                max_tokens=1500,
-                temperature=0.1,
             ),
             timeout=40.0,
         )
+        reply_msg = response.content if response else ""
         if reply_msg and reply_msg.strip():
             return f"[System: 工具 {tc_name} 原始输出长达 {len(out)} 字符。已由 {summarizer_model} 总结如下]\n{reply_msg.strip()}"
     except Exception as exc:
