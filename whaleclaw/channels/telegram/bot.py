@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import random
 import re
 import uuid
@@ -17,6 +18,7 @@ from telegram.ext import ContextTypes
 from whaleclaw.channels.telegram.config import TelegramConfig
 from whaleclaw.plugins.evomap.bridge import build_memory_hint_from_hook_data
 from whaleclaw.plugins.hooks import HookContext, HookManager, HookPoint
+from whaleclaw.providers.base import ImageContent
 from whaleclaw.providers.nvidia import NvidiaProvider
 from whaleclaw.utils.log import get_logger
 from whaleclaw.config.paths import WHALECLAW_HOME
@@ -353,6 +355,7 @@ class TelegramBot:
 
         # ── Handle photos and documents ──
         download_texts = []
+        images = []
         try:
             dl_dir = WHALECLAW_HOME / "downloads"
             dl_dir.mkdir(parents=True, exist_ok=True)
@@ -362,6 +365,12 @@ class TelegramBot:
                 filepath = dl_dir / f"image_{uuid.uuid4().hex[:8]}.jpg"
                 await file.download_to_drive(filepath)
                 download_texts.append(f"![用户发送了一张图片]({filepath})")
+                try:
+                    with open(filepath, "rb") as f:
+                        b64_data = base64.b64encode(f.read()).decode("ascii")
+                    images.append(ImageContent(mime="image/jpeg", data=b64_data))
+                except Exception as e:
+                    log.warning("telegram.image_encode_failed", error=str(e))
             elif message.document:
                 doc = message.document
                 file = await doc.get_file()
@@ -388,9 +397,10 @@ class TelegramBot:
             is_group=is_group,
             text_len=len(text),
             text_preview=(" ".join(text.split())[:80]),
+            has_images=bool(images),
         )
 
-        await self._run_agent_and_reply(text, peer_id, message)
+        await self._run_agent_and_reply(text, peer_id, message, images=images)
 
     # ── Command handlers ───────────────────────────────────
 
@@ -547,6 +557,7 @@ class TelegramBot:
         text: str,
         peer_id: str,
         message: Any,
+        images: list[ImageContent] | None = None,
     ) -> None:
         """Run Agent and send replies to Telegram."""
         if not self._whaleclaw_config or not self._session_manager or not self._tool_registry:
@@ -627,6 +638,7 @@ class TelegramBot:
                 registry=self._tool_registry,
                 on_tool_call=_on_tool_call,
                 on_retry=_on_retry,
+                images=images,
                 session_manager=self._session_manager,
                 session_store=self._session_manager._store,  # noqa: SLF001
                 memory_manager=self._memory_manager,
