@@ -87,7 +87,19 @@ def _clip_text(text: str, max_tokens: int) -> str:
     char_cap = max_tokens * 3
     if len(text) <= char_cap:
         return text
-    return text[:char_cap].rstrip()
+        
+    chopped = text[:char_cap]
+    # To prevent slicing absolute paths, URLs, or commands in half,
+    # find the last whitespace and cut there instead.
+    last_space = chopped.rfind(" ")
+    last_newline = chopped.rfind("\n")
+    safe_cut = max(last_space, last_newline)
+    
+    # Only use safe_cut if it's not too far back (within 80 chars of the cap)
+    if safe_cut > 0 and (char_cap - safe_cut) < 80:
+        return text[:safe_cut].rstrip() + "..."
+        
+    return chopped.rstrip() + "..."
 
 
 def _extract_latest_user_text(group: list[Message]) -> str:
