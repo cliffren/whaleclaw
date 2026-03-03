@@ -361,7 +361,7 @@ class TelegramBot:
                 file = await photo.get_file()
                 filepath = dl_dir / f"image_{uuid.uuid4().hex[:8]}.jpg"
                 await file.download_to_drive(filepath)
-                download_texts.append(f"[用户发送了一张图片，已保存至 {filepath}]")
+                download_texts.append(f"![用户发送了一张图片]({filepath})")
             elif message.document:
                 doc = message.document
                 file = await doc.get_file()
