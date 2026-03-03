@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +20,6 @@ _DANGEROUS_PATTERNS = [
 
 _MAX_OUTPUT = 50_000
 
-import sys
 _CURRENT_PYTHON_BIN = Path(sys.executable).parent
 
 def _strip_control_chars(text: str) -> str:

@@ -651,9 +651,11 @@ async def _async_format_tool_output(
 
 
 def _truncate_fallback(out: str, threshold: int) -> str:
-    head = out[:1000]
-    tail = out[-1000:]
-    msg = f"\n\n... [System: Output exceeded {threshold} chars. Middle {len(out) - 2000} chars truncated. Use grep/head/tail for details] ...\n\n"
+    keep = min(1000, threshold // 2)
+    head = out[:keep]
+    tail = out[-keep:]
+    middle_chars = len(out) - keep * 2
+    msg = f"\n\n... [System: Output exceeded {threshold} chars. Middle {middle_chars} chars truncated. Use grep/head/tail for details] ...\n\n"
     return head + msg + tail
 
 
