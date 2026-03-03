@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import random
 import re
+import uuid
 from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
@@ -18,6 +19,7 @@ from whaleclaw.plugins.evomap.bridge import build_memory_hint_from_hook_data
 from whaleclaw.plugins.hooks import HookContext, HookManager, HookPoint
 from whaleclaw.providers.nvidia import NvidiaProvider
 from whaleclaw.utils.log import get_logger
+from whaleclaw.config.paths import WHALECLAW_HOME
 
 if TYPE_CHECKING:
     from whaleclaw.config.schema import WhaleclawConfig
@@ -349,6 +351,31 @@ class TelegramBot:
         else:
             text = message.text or message.caption or ""
 
+        # ── Handle photos and documents ──
+        download_texts = []
+        try:
+            dl_dir = WHALECLAW_HOME / "downloads"
+            dl_dir.mkdir(parents=True, exist_ok=True)
+            if message.photo:
+                photo = message.photo[-1]
+                file = await photo.get_file()
+                filepath = dl_dir / f"image_{uuid.uuid4().hex[:8]}.jpg"
+                await file.download_to_drive(filepath)
+                download_texts.append(f"[用户发送了一张图片，已保存至 {filepath}]")
+            elif message.document:
+                doc = message.document
+                file = await doc.get_file()
+                filename = doc.file_name or f"file_{uuid.uuid4().hex[:8]}"
+                filepath = dl_dir / filename
+                await file.download_to_drive(filepath)
+                download_texts.append(f"[用户发送了一个文件，已保存至 {filepath}]")
+        except Exception as e:
+            log.warning("telegram.download_failed", error=str(e))
+            
+        if download_texts:
+            text = text + "\n\n" + "\n".join(download_texts) if text else "\n".join(download_texts)
+
+        text = text.strip()
         if not text:
             return
 

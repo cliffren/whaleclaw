@@ -60,10 +60,10 @@ class TelegramChannel(ChannelPlugin):
         cmd_names = [c.command for c in BOT_COMMANDS]
         app.add_handler(CommandHandler(cmd_names, self._bot.handle_command))
 
-        # Register generic message handler (non-command text)
+        # Register generic message handler (non-command text, photos, documents)
         app.add_handler(
             MessageHandler(
-                filters.TEXT & ~filters.COMMAND,
+                (filters.TEXT | filters.PHOTO | filters.Document.ALL) & ~filters.COMMAND,
                 self._bot.handle_message,
             )
         )
