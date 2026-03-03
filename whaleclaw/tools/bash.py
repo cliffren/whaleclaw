@@ -19,8 +19,8 @@ _DANGEROUS_PATTERNS = [
 
 _MAX_OUTPUT = 50_000
 
-_PROJECT_PYTHON_BIN = Path(__file__).resolve().parents[2] / "python" / "bin"
-
+import sys
+_CURRENT_PYTHON_BIN = Path(sys.executable).parent
 
 def _strip_control_chars(text: str) -> str:
     """Remove ASCII control characters except LF/TAB/CR."""
@@ -64,8 +64,8 @@ class BashTool(Tool):
                 return ToolResult(success=False, output="", error=f"危险命令被拦截: {command}")
 
         env = os.environ.copy()
-        if _PROJECT_PYTHON_BIN.is_dir():
-            env["PATH"] = f"{_PROJECT_PYTHON_BIN}:{env.get('PATH', '')}"
+        if _CURRENT_PYTHON_BIN.is_dir():
+            env["PATH"] = f"{_CURRENT_PYTHON_BIN}:{env.get('PATH', '')}"
 
         try:
             proc = await asyncio.create_subprocess_shell(
