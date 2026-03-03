@@ -12,6 +12,8 @@
 > - **Embedding Memory**: 默认启用本地向量库，支持万级历史记录的精确语义召回。
 > 
 > 请查阅 [readme_sup.md](./readme_sup.md) 获取所有新增功能的详细配置手册。
+>
+> 同时也非常感谢原作者 [flywhale-666](https://github.com/flywhale-666) 提供的优秀基础！
 
 WhaleClaw 是一个基于 Python 与 AI 编程工具协同开发的本地 Agent 项目。
 
