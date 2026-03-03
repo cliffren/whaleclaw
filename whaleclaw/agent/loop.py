@@ -592,22 +592,70 @@ async def _execute_tool(
     return tc.id, result
 
 
-def _format_tool_output(result: ToolResult) -> str:
-    """Format ToolResult into a string for LLM consumption."""
+async def _async_format_tool_output(
+    result: ToolResult,
+    tc_name: str,
+    tc_args: dict[str, Any],
+    user_query: str,
+    router: ModelRouter | None,
+    summarizer_model: str | None,
+) -> str:
+    """Format ToolResult into a string, using an LLM to summarize if too long."""
     if result.success:
         out = result.output or "(empty output)"
     else:
         out = f"[ERROR] {result.error or 'unknown error'}\n{result.output}".strip()
         
-    # Smart output truncation: prevents huge terminal outputs (like `cat pdf`)
-    # from blowing up the context window and causing the LLM to get lost.
-    if len(out) > 2500:
-        head = out[:1000]
-        tail = out[-1000:]
-        msg = f"\n\n... [System: Output exceeded 2500 chars. Middle {len(out) - 2000} chars truncated. Use grep/head/tail for details] ...\n\n"
-        out = head + msg + tail
+    threshold = 2500
+    if len(out) <= threshold:
+        return out
         
-    return out
+    if router is None or not summarizer_model:
+        return _truncate_fallback(out, threshold)
+        
+    prompt = f"""
+你是一个高级的数据提取助手。当前主业务模型正在解决用户的需求：
+<user_query>{user_query}</user_query>
+
+为了解决这个问题，主模型刚刚执行了一个工具调用：
+工具名：{tc_name}
+参数：{json.dumps(tc_args, ensure_ascii=False)}
+
+但该工具返回的结果极其庞大（大约 {len(out)} 字符），为了防止主模型上下文过载，请你阅读以下原始输出，并提炼出对解答 <user_query> 最有价值的关键信息。
+- 请保持客观准确，直接输出提炼后的关键内容，作为替代原本长文本的工具返回值。
+- 输出内容尽量控制在 1500 字以内。
+- 如果输出中包含明确的系统报错（Error）、文件不存在等异常信息，请务必完整保留。
+- 绝对不要输出任何寒暄或解释（如“好的”、“提炼如下”等）。
+
+原始输出内容（由于过度庞大，部分内容可能已被截断）：
+--- 原始输出开始 ---
+{out[:80000]}
+--- 原始输出结束 ---
+""".strip()
+
+    try:
+        reply_msg = await asyncio.wait_for(
+            router.call_text(
+                model_id=summarizer_model,
+                messages=[Message(role="user", content=prompt)],
+                max_tokens=1500,
+                temperature=0.1,
+            ),
+            timeout=40.0,
+        )
+        if reply_msg and reply_msg.strip():
+            return f"[System: 工具 {tc_name} 原始输出长达 {len(out)} 字符。已由 {summarizer_model} 总结如下]\n{reply_msg.strip()}"
+    except Exception as exc:
+        log.warning("agent.tool_output_summarize_failed", error=str(exc))
+        
+    return _truncate_fallback(out, threshold)
+
+
+def _truncate_fallback(out: str, threshold: int) -> str:
+    head = out[:1000]
+    tail = out[-1000:]
+    msg = f"\n\n... [System: Output exceeded {threshold} chars. Middle {len(out) - 2000} chars truncated. Use grep/head/tail for details] ...\n\n"
+    return head + msg + tail
 
 
 def _validate_tool_call_args(tc: ToolCall, registry: ToolRegistry) -> str | None:
@@ -1277,7 +1325,14 @@ async def run_agent(
                 ):
                     real_image_paths.append(path_match.group(1))
 
-            tool_output = _format_tool_output(result)
+            tool_output = await _async_format_tool_output(
+                result=result,
+                tc_name=tc.name,
+                tc_args=tc.arguments,
+                user_query=message,
+                router=router,
+                summarizer_model=summarizer_cfg.model.strip() if summarizer_cfg.enabled else None,
+            )
 
             if native_tools:
                 tool_msg = Message(

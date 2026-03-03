@@ -1,6 +1,7 @@
 """Tests for the Agent main loop (mocked provider)."""
 
 from __future__ import annotations
+import typing
 
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -61,6 +62,7 @@ async def test_run_agent_retries_once_on_empty_reply_then_recovers() -> None:
         *,
         tools: Any = None,  # noqa: ARG001
         on_stream: Any = None,  # noqa: ARG001
+        **kwargs: typing.Any,
     ) -> AgentResponse:
         nonlocal call_count
         call_count += 1
@@ -87,6 +89,7 @@ async def test_run_agent_returns_fallback_after_two_empty_replies() -> None:
         *,
         tools: Any = None,  # noqa: ARG001
         on_stream: Any = None,  # noqa: ARG001
+        **kwargs: typing.Any,
     ) -> AgentResponse:
         return AgentResponse(content="", model="test-model", input_tokens=0, output_tokens=0)
 
@@ -115,6 +118,7 @@ async def test_run_agent_streams() -> None:
         *,
         tools: Any = None,  # noqa: ARG001
         on_stream: Any = None,
+        **kwargs: typing.Any,
     ) -> AgentResponse:
         if on_stream:
             await on_stream("Hello ")
@@ -261,6 +265,7 @@ async def test_run_agent_tool_call_loop() -> None:
         *,
         tools: Any = None,  # noqa: ARG001
         on_stream: Any = None,  # noqa: ARG001
+        **kwargs: typing.Any,
     ) -> AgentResponse:
         nonlocal call_count
         call_count += 1
@@ -306,6 +311,7 @@ async def test_run_agent_updates_assistant_name_from_user_message() -> None:
         *,
         tools: Any = None,  # noqa: ARG001
         on_stream: Any = None,  # noqa: ARG001
+        **kwargs: typing.Any,
     ) -> AgentResponse:
         system_text = messages[0].content if messages else ""
         return AgentResponse(content=system_text, model="test-model")
@@ -336,6 +342,7 @@ async def test_run_agent_does_not_rename_on_plain_name_question() -> None:
         *,
         tools: Any = None,  # noqa: ARG001
         on_stream: Any = None,  # noqa: ARG001
+        **kwargs: typing.Any,
     ) -> AgentResponse:
         system_text = messages[0].content if messages else ""
         return AgentResponse(content=system_text, model="test-model")
@@ -380,6 +387,7 @@ async def test_run_agent_unknown_tool() -> None:
         *,
         tools: Any = None,  # noqa: ARG001
         on_stream: Any = None,  # noqa: ARG001
+        **kwargs: typing.Any,
     ) -> AgentResponse:
         nonlocal call_count
         call_count += 1
@@ -428,6 +436,7 @@ async def test_run_agent_fallback_mode() -> None:
         *,
         tools: Any = None,  # noqa: ARG001
         on_stream: Any = None,  # noqa: ARG001
+        **kwargs: typing.Any,
     ) -> AgentResponse:
         nonlocal call_count
         call_count += 1
@@ -483,6 +492,7 @@ async def test_run_agent_retries_when_tool_args_invalid_then_succeeds() -> None:
         *,
         tools: Any = None,  # noqa: ARG001
         on_stream: Any = None,  # noqa: ARG001
+        **kwargs: typing.Any,
     ) -> AgentResponse:
         nonlocal call_count
         call_count += 1
@@ -535,6 +545,7 @@ async def test_run_agent_circuit_breaker_blocks_repeated_browser_failures() -> N
         *,
         tools: Any = None,  # noqa: ARG001
         on_stream: Any = None,  # noqa: ARG001
+        **kwargs: typing.Any,
     ) -> AgentResponse:
         nonlocal call_count
         call_count += 1
@@ -577,6 +588,7 @@ async def test_run_agent_repairs_browser_query_without_action() -> None:
         *,
         tools: Any = None,  # noqa: ARG001
         on_stream: Any = None,  # noqa: ARG001
+        **kwargs: typing.Any,
     ) -> AgentResponse:
         nonlocal call_count
         call_count += 1
@@ -617,6 +629,7 @@ async def test_run_agent_repairs_bash_cmd_alias() -> None:
         *,
         tools: Any = None,  # noqa: ARG001
         on_stream: Any = None,  # noqa: ARG001
+        **kwargs: typing.Any,
     ) -> AgentResponse:
         nonlocal call_count
         call_count += 1
@@ -664,6 +677,7 @@ async def test_run_agent_repairs_garbled_browser_query_to_user_message() -> None
         *,
         tools: Any = None,  # noqa: ARG001
         on_stream: Any = None,  # noqa: ARG001
+        **kwargs: typing.Any,
     ) -> AgentResponse:
         nonlocal call_count
         call_count += 1
@@ -732,6 +746,7 @@ async def test_run_agent_rejects_escaped_block_file_edit_args() -> None:
         *,
         tools: Any = None,  # noqa: ARG001
         on_stream: Any = None,  # noqa: ARG001
+        **kwargs: typing.Any,
     ) -> AgentResponse:
         nonlocal call_count
         call_count += 1
@@ -866,6 +881,7 @@ async def test_run_agent_injects_recalled_memory_into_system_prompt() -> None:
         *,
         tools: Any = None,  # noqa: ARG001
         on_stream: Any = None,  # noqa: ARG001
+        **kwargs: typing.Any,
     ) -> AgentResponse:
         captured_messages[:] = messages
         return AgentResponse(content="收到", model="test-model")
@@ -976,6 +992,7 @@ async def test_run_agent_injects_global_style_directive() -> None:
         *,
         tools: Any = None,  # noqa: ARG001
         on_stream: Any = None,  # noqa: ARG001
+        **kwargs: typing.Any,
     ) -> AgentResponse:
         captured_messages[:] = messages
         return AgentResponse(content="ok", model="test-model")
@@ -1009,6 +1026,7 @@ async def test_run_agent_injects_external_memory_hint() -> None:
         *,
         tools: Any = None,  # noqa: ARG001
         on_stream: Any = None,  # noqa: ARG001
+        **kwargs: typing.Any,
     ) -> AgentResponse:
         captured_messages[:] = messages
         return AgentResponse(content="ok", model="test-model")
@@ -1043,6 +1061,7 @@ async def test_run_agent_truncates_external_memory_when_compressor_unavailable()
         *,
         tools: Any = None,  # noqa: ARG001
         on_stream: Any = None,  # noqa: ARG001
+        **kwargs: typing.Any,
     ) -> AgentResponse:
         captured_messages[:] = messages
         return AgentResponse(content="ok", model="test-model")
@@ -1078,6 +1097,7 @@ async def test_run_agent_keeps_short_external_memory_without_compress() -> None:
         *,
         tools: Any = None,  # noqa: ARG001
         on_stream: Any = None,  # noqa: ARG001
+        **kwargs: typing.Any,
     ) -> AgentResponse:
         if messages and messages[0].role == "system" and "外部经验压缩器" in messages[0].content:
             return AgentResponse(content="压缩后经验", model="compress-model")
