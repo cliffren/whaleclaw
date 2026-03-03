@@ -413,14 +413,17 @@ def create_default_registry(
     *,
     memory_manager: "MemoryManager | None" = None,
     memory_store: "MemoryStore | None" = None,
+    task_monitor: "Any | None" = None,
 ) -> ToolRegistry:
     """Create a ToolRegistry with all built-in tools registered.
 
     Args:
         session_manager: Optional SessionManager for session tools.
         cron_scheduler: Optional CronScheduler for cron/reminder tools.
+        task_monitor: Optional TaskMonitor for bash_background tool.
     """
     from whaleclaw.tools.bash import BashTool
+    from whaleclaw.tools.bash_background import BashBackgroundTool, set_task_monitor
     from whaleclaw.tools.browser import BrowserTool
     from whaleclaw.tools.desktop_capture import DesktopCaptureTool
     from whaleclaw.tools.file_edit import FileEditTool
@@ -429,6 +432,11 @@ def create_default_registry(
 
     registry = ToolRegistry()
     registry.register(BashTool())
+
+    if task_monitor is not None:
+        set_task_monitor(task_monitor)
+    registry.register(BashBackgroundTool())
+
     registry.register(FileReadTool())
     registry.register(FileWriteTool())
     registry.register(FileEditTool())

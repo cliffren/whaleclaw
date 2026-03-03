@@ -24,6 +24,7 @@ from whaleclaw.cron.scheduler import CronAction, CronScheduler
 from whaleclaw.cron.store import CronStore
 from whaleclaw.gateway.middleware import AuthMiddleware, create_jwt
 from whaleclaw.gateway.protocol import make_message
+from whaleclaw.gateway.task_monitor import TaskMonitor
 from whaleclaw.gateway.ws import push_to_session, websocket_handler
 from whaleclaw.memory.manager import MemoryManager
 from whaleclaw.memory.vector import SimpleMemoryStore
@@ -82,6 +83,7 @@ def create_app(config: WhaleclawConfig) -> FastAPI:
                     await mgr.add_message(s, "assistant", content)
 
     cron_scheduler = CronScheduler(on_fire=_on_cron_fire)
+    task_monitor = TaskMonitor()
     plugin_registry = PluginRegistry()
     hook_manager = HookManager()
 
@@ -124,6 +126,7 @@ def create_app(config: WhaleclawConfig) -> FastAPI:
             cron_scheduler=cron_scheduler,
             memory_manager=memory_manager,
             memory_store=memory_store,
+            task_monitor=task_monitor,
         )
 
         await _load_plugins(config, registry, plugin_registry, hook_manager)
@@ -131,6 +134,33 @@ def create_app(config: WhaleclawConfig) -> FastAPI:
 
         await plugin_registry.start_all()
         await cron_scheduler.start()
+
+        # Wire notify_fn so TaskMonitor can push messages back to sessions
+        async def _task_notify(session_id: str, content: str) -> None:
+            sent = await push_to_session(session_id, make_message(session_id, content))
+            if not sent and feishu_channel is not None:
+                mgr2 = state.get("manager")
+                if isinstance(mgr2, SessionManager):
+                    s = await mgr2.get(session_id)
+                    if s and s.channel == "feishu" and feishu_channel.client:
+                        await feishu_channel.client.send_message(
+                            s.peer_id, "text",
+                            json.dumps({"text": content}, ensure_ascii=False),
+                        )
+            if not sent and telegram_channel is not None:
+                mgr2 = state.get("manager")
+                if isinstance(mgr2, SessionManager):
+                    s = await mgr2.get(session_id)
+                    if s and s.channel == "telegram":
+                        await telegram_channel.send(s.peer_id, content)
+            mgr2 = state.get("manager")
+            if isinstance(mgr2, SessionManager):
+                s = await mgr2.get(session_id)
+                if s:
+                    await mgr2.add_message(s, "assistant", content)
+
+        task_monitor.notify_fn = _task_notify
+        await task_monitor.start()
 
         summarizer_model = config.agent.summarizer.model.strip()
         prewarm_task: asyncio.Task[None] | None = None
@@ -257,6 +287,7 @@ def create_app(config: WhaleclawConfig) -> FastAPI:
             await telegram_channel.stop()
         if feishu_channel is not None:
             await feishu_channel.stop()
+        await task_monitor.stop()
         if prewarm_task is not None and not prewarm_task.done():
             prewarm_task.cancel()
         compressor = state["group_compressor"]
@@ -562,6 +593,7 @@ def create_app(config: WhaleclawConfig) -> FastAPI:
         tools = reg.list_tools()
         tool_categories: dict[str, str] = {
             "bash": "system",
+            "bash_background": "system",
             "file_read": "file", "file_write": "file", "file_edit": "file",
             "browser": "browser",
             "sessions_list": "session", "sessions_history": "session", "sessions_send": "session",
