@@ -1,5 +1,18 @@
 # WhaleClaw
 
+> [!IMPORTANT]
+> **🚀 本分支强化：WhaleClaw 深度生产力增强版**
+>
+> 本仓库是基于原版 [flywhale-666/whaleclaw](https://github.com/flywhale-666/whaleclaw) 的深度二次开发版，旨在提供更极致的生产力工具体验。
+> 
+> **主要新增特性：**
+> - **Async Background Task**: 真正解决了耗时任务（如训练、测试）卡死 Agent 的痛点。
+> - **Telegram UX Plus**: 仿手机端原生体验，支持实时思考动画、工具调用折叠预览。
+> - **Workspace Isolation**: 支持多实例物理隔离运行，文件操作互不干扰。
+> - **Embedding Memory**: 默认启用本地向量库，支持万级历史记录的精确语义召回。
+> 
+> 请查阅 [readme_sup.md](./readme_sup.md) 获取所有新增功能的详细配置手册。
+
 WhaleClaw 是一个基于 Python 与 AI 编程工具协同开发的本地 Agent 项目。
 
 首先感谢 [OpenClaw](https://github.com/openclaw/openclaw)。WhaleClaw 的很多核心思路来自 OpenClaw：本地优先、工具驱动、多渠道接入、可扩展记忆与会话管理。在此基础上，WhaleClaw 做了更偏工程化和成本控制的实现，目标是“可长期运行、可控 token、可解释行为”。
@@ -11,7 +24,7 @@ WhaleClaw 是一个运行在本地的 AI Agent 框架，支持 WebChat 与飞书
 ## 核心功能
 
 - 多模型路由：支持 Anthropic、OpenAI、DeepSeek、Qwen、GLM、Gemini 等。
-- 多渠道接入：WebChat、飞书（持续扩展）。
+- 多渠道接入：WebChat、飞书、**Telegram**。
 - 工具体系：bash、文件读写编辑、浏览器、会话工具、技能工具等。
 - 会话管理：持久化消息、上下文窗口裁剪、会话级 token 统计。
 - 长期记忆：自动捕获、检索召回、LLM 组织、全局风格沉淀。
