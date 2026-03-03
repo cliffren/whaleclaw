@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import random
 import re
 from collections.abc import Callable
 from contextlib import suppress
@@ -36,6 +38,219 @@ _FILE_EXTS = {
     ".mp3", ".wav", ".aif", ".aiff", ".m4a", ".aac", ".ogg", ".opus", ".flac",
     ".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm",
 }
+
+# ── Tool status display ─────────────────────────────────────
+_TOOL_ICONS: dict[str, str] = {
+    "bash": "💻",
+    "file_read": "📖",
+    "file_write": "✍️",
+    "file_edit": "✏️",
+    "browser": "🌐",
+    "memory_search": "🔍",
+    "memory_add": "📝",
+    "memory_list": "📋",
+    "skill": "🎓",
+    "desktop_capture": "📷",
+}
+_KEY_FIELDS: dict[str, str] = {
+    "bash": "command",
+    "file_read": "path",
+    "file_write": "path",
+    "file_edit": "path",
+    "memory_search": "query",
+    "memory_add": "content",
+    "browser": "url",
+}
+_PREVIEW_MAX = 32
+
+
+def _tool_icon(name: str) -> str:
+    return _TOOL_ICONS.get(name, "🛠️")
+
+
+def _tool_preview(name: str, args: dict[str, Any]) -> str:
+    field = _KEY_FIELDS.get(name, next(iter(args), None))
+    if not field:
+        return ""
+    val = str(args.get(field, "")).replace("\n", " ").strip()
+    if not val:
+        return ""
+    if len(val) > _PREVIEW_MAX:
+        return val[:_PREVIEW_MAX] + "…"
+    return val
+
+
+# ── Status message tracker ──────────────────────────────────
+_THINKING_FRAMES = (".", "..", "...")
+_THINKING_MIN_MS = 1800
+_THINKING_MAX_MS = 2200
+_SUPPRESSION_MS = 2000
+
+
+class StatusMessageTracker:
+    """Manages a single editable Telegram status message during agent execution.
+
+    Design:
+    - One status message per agent run, edited in place (never spam new messages).
+    - Animated thinking dots while LLM is processing.
+    - Tool calls shown with icon + truncated key argument.
+    - Network retry shown as warning line.
+    - Telegram 429 rate-limit handled via backoff (silent skip during cooldown).
+    - All edits serialised via asyncio task chain to avoid concurrent edit errors.
+    - Post-completion suppression prevents stale events from editing after reply sent.
+    """
+
+    def __init__(self, bot: Any, chat_id: int, thread_id: int | None = None) -> None:
+        self._bot = bot
+        self._chat_id = chat_id
+        self._thread_id = thread_id
+        self._msg_id: int | None = None
+        self._last_text: str = ""
+        self._tool_lines: list[str] = []
+        self._retrying: bool = False
+        self._retry_text: str = ""
+        self._completed: bool = False
+        self._rate_limited_until: float = 0.0
+        self._task_chain: asyncio.Task[None] | None = None
+
+        # Thinking animation state
+        self._anim_task: asyncio.Task[None] | None = None
+
+    # ── Public API ─────────────────────────────────────────
+
+    def start_thinking(self) -> None:
+        """Start the animated thinking dots."""
+        if self._anim_task and not self._anim_task.done():
+            return
+        self._anim_task = asyncio.create_task(self._thinking_loop())
+
+    def stop_thinking(self) -> None:
+        if self._anim_task:
+            self._anim_task.cancel()
+            self._anim_task = None
+
+    async def on_tool_start(self, tool_name: str, args: dict[str, Any]) -> None:
+        self.stop_thinking()
+        preview = _tool_preview(tool_name, args)
+        icon = _tool_icon(tool_name)
+        if preview:
+            line = f"{icon} {tool_name}: {preview}"
+        else:
+            line = f"{icon} {tool_name}"
+        self._tool_lines.append(line)
+        self._retrying = False
+        self._enqueue_update()
+
+    async def on_retry(self, attempt: int, max_attempts: int, error: str) -> None:  # noqa: ARG002
+        self._retrying = True
+        self._retry_text = f"⚠️ 网络抖动，重试 {attempt}/{max_attempts}…"
+        self._enqueue_update()
+
+    async def clear(self) -> None:
+        """Mark as completed and delete the status message."""
+        self._completed = True
+        self.stop_thinking()
+        if self._msg_id is not None:
+            with suppress(Exception):
+                await self._bot.delete_message(
+                    chat_id=self._chat_id, message_id=self._msg_id
+                )
+            self._msg_id = None
+
+    # ── Internal ───────────────────────────────────────────
+
+    def _build_text(self, frame_idx: int | None = None) -> str:
+        if frame_idx is not None and not self._tool_lines:
+            # Pure thinking state — animated dots
+            dots = _THINKING_FRAMES[frame_idx % len(_THINKING_FRAMES)]
+            return f"💭[思考{dots:<3}]"
+        lines = list(self._tool_lines[-8:])  # cap at 8 tool lines
+        if self._retrying:
+            lines.append(self._retry_text)
+        return "\n".join(lines) if lines else "💭[思考...]"
+
+    async def _thinking_loop(self) -> None:
+        frame = 0
+        while not self._completed:
+            delay = random.randint(_THINKING_MIN_MS, _THINKING_MAX_MS) / 1000
+            await asyncio.sleep(delay)
+            if self._completed:
+                break
+            # Only animate when no tools have been called yet
+            if not self._tool_lines:
+                await self._safe_edit(self._build_text(frame))
+            frame += 1
+
+    def _enqueue_update(self) -> None:
+        """Serialise edit calls: chain as a task after the previous one."""
+        async def _do() -> None:
+            if self._completed:
+                return
+            await self._safe_edit(self._build_text())
+
+        prev = self._task_chain
+        async def _chained() -> None:
+            if prev:
+                with suppress(Exception):
+                    await prev
+            await _do()
+
+        self._task_chain = asyncio.create_task(_chained())
+
+    async def _safe_edit(self, text: str) -> None:
+        """Edit or create the status message, with rate-limit handling."""
+        now = asyncio.get_running_loop().time()
+        if now < self._rate_limited_until:
+            return  # in cooldown — skip silently
+
+        text = text.strip()
+        if not text or text == self._last_text:
+            return
+
+        try:
+            if self._msg_id is None:
+                sent = await self._bot.send_message(
+                    chat_id=self._chat_id,
+                    text=text,
+                    disable_notification=True,
+                    message_thread_id=self._thread_id,
+                )
+                self._msg_id = sent.message_id
+                self._last_text = text
+            else:
+                await self._bot.edit_message_text(
+                    chat_id=self._chat_id,
+                    message_id=self._msg_id,
+                    text=text,
+                )
+                self._last_text = text
+        except Exception as exc:
+            msg = str(exc).lower()
+            # 429 rate limit
+            retry_after = self._parse_retry_after(exc)
+            if retry_after:
+                self._rate_limited_until = now + retry_after
+                return
+            # Message not modified — skip
+            if "message is not modified" in msg:
+                return
+            # Message deleted / gone — send a fresh one next time
+            if any(k in msg for k in ("message to edit not found", "message can't be edited",
+                                       "message is too old", "message_id_invalid")):
+                self._msg_id = None
+                self._last_text = ""
+            # Other errors: ignore silently
+
+    @staticmethod
+    def _parse_retry_after(exc: Exception) -> float:
+        """Extract retry_after seconds from a Telegram 429 error."""
+        msg = str(exc)
+        import re as _re
+        m = _re.search(r"retry.?after\D*(\d+)", msg, _re.IGNORECASE)
+        if m:
+            return float(m.group(1))
+        return 0.0
+
 
 # ── Commands registered in the Telegram menu ────────────────
 BOT_COMMANDS = [
@@ -338,8 +553,21 @@ class TelegramBot:
             make_ws_msg(session.id, f"📨 **Telegram** `{peer_id}`:\n{text}")
         )
 
-        # Send typing indicator
-        await message.chat.send_action("typing")
+        # ── Status message tracker (progress feedback without spamming) ──
+        chat = message.chat
+        thread_id: int | None = getattr(message, "message_thread_id", None)
+        tracker = StatusMessageTracker(
+            bot=message.get_bot(),
+            chat_id=chat.id,
+            thread_id=thread_id,
+        )
+        tracker.start_thinking()
+
+        async def _on_tool_call(tool_name: str, args: dict) -> None:  # type: ignore[type-arg]
+            await tracker.on_tool_start(tool_name, args)
+
+        async def _on_retry(attempt: int, max_attempts: int, error: str) -> None:
+            await tracker.on_retry(attempt, max_attempts, error)
 
         router = ModelRouter(self._whaleclaw_config.models)
         extra_memory = ""
@@ -370,6 +598,8 @@ class TelegramBot:
                 session=session,
                 router=router,
                 registry=self._tool_registry,
+                on_tool_call=_on_tool_call,
+                on_retry=_on_retry,
                 session_manager=self._session_manager,
                 session_store=self._session_manager._store,  # noqa: SLF001
                 memory_manager=self._memory_manager,
@@ -378,6 +608,7 @@ class TelegramBot:
             )
             log.info("telegram.agent_reply", reply_len=len(reply), preview=reply[:200])
         except Exception as exc:
+            await tracker.clear()
             if self._hook_manager is not None:
                 with suppress(Exception):
                     await self._hook_manager.run(
@@ -399,6 +630,9 @@ class TelegramBot:
                 make_ws_msg(session.id, f"❌ **Telegram处理失败**: {error_text}")
             )
             return
+
+        # Clear status message before sending the reply
+        await tracker.clear()
 
         if not reply.strip():
             await message.reply_text("任务执行中但未返回结果，请稍后重试或查看 WebChat。")

@@ -102,11 +102,12 @@ class ModelRouter:
         *,
         tools: list[ToolSchema] | None = None,
         on_stream: StreamCallback | None = None,
+        on_retry: object = None,
     ) -> AgentResponse:
         """Route to the correct provider and call chat."""
         provider, model_name = self.resolve(model_id)
         return await provider.chat(
-            messages, model_name, tools=tools, on_stream=on_stream
+            messages, model_name, tools=tools, on_stream=on_stream, on_retry=on_retry
         )
 
     async def chat_with_failover(

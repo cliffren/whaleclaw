@@ -33,7 +33,7 @@ if [ ! -f "$CONFIG_FILE" ]; then
     cat > "$CONFIG_FILE" << 'DEFAULTCFG'
 {
   "gateway": {
-    "port": 18666,
+    "port": 18667,
     "bind": "127.0.0.1",
     "verbose": false,
     "auth": { "mode": "none", "password": null }

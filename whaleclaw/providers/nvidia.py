@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from whaleclaw.providers.base import AgentResponse, Message, ToolSchema
+from whaleclaw.providers.base import AgentResponse, Message, OnNetworkRetry, ToolSchema
 from whaleclaw.providers.openai_compat import OpenAICompatProvider
 from whaleclaw.types import StreamCallback
 
@@ -47,8 +47,9 @@ class NvidiaProvider(OpenAICompatProvider):
         *,
         tools: list[ToolSchema] | None = None,
         on_stream: StreamCallback | None = None,
+        on_retry: OnNetworkRetry | None = None,
     ) -> AgentResponse:
         effective_tools = tools if self.model_supports_tools(model) else None
         return await super().chat(
-            messages, model, tools=effective_tools, on_stream=on_stream
+            messages, model, tools=effective_tools, on_stream=on_stream, on_retry=on_retry
         )

@@ -130,6 +130,7 @@ class AnthropicProvider(LLMProvider):
         *,
         tools: list[ToolSchema] | None = None,
         on_stream: StreamCallback | None = None,
+        on_retry: object = None,  # unused, Anthropic has no retry logic
     ) -> AgentResponse:
         """Call Anthropic Messages API with SSE streaming."""
         body = self._build_body(messages, model, tools)

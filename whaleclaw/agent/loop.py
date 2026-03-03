@@ -760,6 +760,7 @@ async def run_agent(
     registry: ToolRegistry | None = None,
     on_tool_call: OnToolCall | None = None,
     on_tool_result: OnToolResult | None = None,
+    on_retry: object | None = None,
     images: list[ImageContent] | None = None,
     session_manager: SessionManager | None = None,
     session_store: SessionStore | None = None,
@@ -1032,6 +1033,7 @@ async def run_agent(
             all_messages,
             tools=tool_schemas or None,
             on_stream=on_stream,
+            on_retry=on_retry,
         )
         _llm_ms = int((_time.monotonic() - _llm_t0) * 1000)
         round_input = response.input_tokens

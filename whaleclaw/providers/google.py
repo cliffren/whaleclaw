@@ -124,6 +124,7 @@ class GoogleProvider(LLMProvider):
         *,
         tools: list[ToolSchema] | None = None,
         on_stream: StreamCallback | None = None,
+        on_retry: object = None,  # unused, Google has no retry logic
     ) -> AgentResponse:
         body = self._build_body(messages, tools)
         url = f"{_BASE_URL}/models/{model}:streamGenerateContent?alt=sse&key={self._api_key}"

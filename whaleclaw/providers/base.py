@@ -1,11 +1,15 @@
 """Abstract base classes for LLM providers."""
 
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 from whaleclaw.types import StreamCallback
+
+# Callback invoked when a network retry occurs: (attempt, max_attempts, error_class_name)
+OnNetworkRetry = Callable[[int, int, str], Awaitable[None]]
 
 
 class CacheControl(BaseModel):
@@ -73,6 +77,7 @@ class LLMProvider(ABC):
         *,
         tools: list[ToolSchema] | None = None,
         on_stream: StreamCallback | None = None,
+        on_retry: OnNetworkRetry | None = None,
     ) -> AgentResponse:
         """Send messages and return a complete response.
 
@@ -81,4 +86,6 @@ class LLMProvider(ABC):
             model: Model identifier (e.g. ``claude-sonnet-4-20250514``).
             tools: Tool JSON schemas via native API parameter.
             on_stream: Optional callback invoked with each text chunk.
+            on_retry: Optional callback invoked on network retry
+                      (attempt, max_attempts, error_class_name).
         """

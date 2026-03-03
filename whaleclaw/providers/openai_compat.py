@@ -18,6 +18,7 @@ from whaleclaw.providers.base import (
     AgentResponse,
     LLMProvider,
     Message,
+    OnNetworkRetry,
     ToolCall,
     ToolSchema,
 )
@@ -163,6 +164,7 @@ class OpenAICompatProvider(LLMProvider):
         *,
         tools: list[ToolSchema] | None = None,
         on_stream: StreamCallback | None = None,
+        on_retry: OnNetworkRetry | None = None,
     ) -> AgentResponse:
         body = self._build_body(messages, model, tools)
         headers = self._build_headers()
@@ -255,6 +257,11 @@ class OpenAICompatProvider(LLMProvider):
                     max_attempts=max_attempts,
                     error=exc.__class__.__name__,
                 )
+                if on_retry:
+                    try:
+                        await on_retry(attempt, max_attempts, exc.__class__.__name__)
+                    except Exception:
+                        pass
                 await asyncio.sleep(backoff_seconds)
                 continue
 

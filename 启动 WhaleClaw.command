@@ -8,10 +8,18 @@ cd "$(dirname "$0")"
 WHALECLAW_HOME="${WHALECLAW_HOME:-$HOME/.whaleclaw}"
 export WHALECLAW_HOME
 
+# 记住项目根目录（代码所在位置），供内部模块使用
+export WHALECLAW_PROJECT="$(pwd)"
+
+# 切换到实例专属工作目录，确保多实例下相对路径互不干扰
+WHALECLAW_WORKSPACE="$WHALECLAW_HOME/workspace"
+mkdir -p "$WHALECLAW_WORKSPACE"
+cd "$WHALECLAW_WORKSPACE"
+
 if [ -f "/Users/rentao/miniconda3/envs/whaleclaw/bin/python" ]; then
     PYTHON="/Users/rentao/miniconda3/envs/whaleclaw/bin/python"
-elif [ -f "./python/bin/python3.12" ]; then
-    PYTHON="./python/bin/python3.12"
+elif [ -f "$WHALECLAW_PROJECT/python/bin/python3.12" ]; then
+    PYTHON="$WHALECLAW_PROJECT/python/bin/python3.12"
 else
     PYTHON="python"
 fi
@@ -39,7 +47,7 @@ fi
 if ! "$PYTHON" -c "import whaleclaw" 2>/dev/null; then
     echo ""
     echo "  📦 首次运行，正在安装依赖..."
-    "$PYTHON" -m pip install -e ".[dev,embedding]" --quiet
+    "$PYTHON" -m pip install -e "$WHALECLAW_PROJECT/.[dev,embedding]" --quiet
     echo "  ✅ 依赖安装完成"
 fi
 
