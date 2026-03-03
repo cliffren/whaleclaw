@@ -63,7 +63,7 @@ class TelegramChannel(ChannelPlugin):
         # Register generic message handler (non-command text, photos, documents)
         app.add_handler(
             MessageHandler(
-                (filters.TEXT | filters.PHOTO | filters.Document.ALL) & ~filters.COMMAND,
+                (filters.TEXT | filters.PHOTO | filters.Document.ALL | filters.VIDEO | filters.AUDIO | filters.VOICE | filters.VIDEO_NOTE) & ~filters.COMMAND,
                 self._bot.handle_message,
             )
         )

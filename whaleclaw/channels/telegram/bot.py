@@ -378,6 +378,32 @@ class TelegramBot:
                 filepath = dl_dir / filename
                 await file.download_to_drive(filepath)
                 download_texts.append(f"[用户发送了一个文件，已保存至 {filepath}]")
+            elif message.video:
+                vid = message.video
+                file = await vid.get_file()
+                filename = vid.file_name or f"video_{uuid.uuid4().hex[:8]}.mp4"
+                filepath = dl_dir / filename
+                await file.download_to_drive(filepath)
+                download_texts.append(f"[用户发送了一段视频，已保存至 {filepath}]")
+            elif message.audio:
+                aud = message.audio
+                file = await aud.get_file()
+                filename = aud.file_name or f"audio_{uuid.uuid4().hex[:8]}.mp3"
+                filepath = dl_dir / filename
+                await file.download_to_drive(filepath)
+                download_texts.append(f"[用户发送了一段音频，已保存至 {filepath}]")
+            elif message.voice:
+                voc = message.voice
+                file = await voc.get_file()
+                filepath = dl_dir / f"voice_{uuid.uuid4().hex[:8]}.ogg"
+                await file.download_to_drive(filepath)
+                download_texts.append(f"[用户发送了一段语音消息，已保存至 {filepath}]")
+            elif message.video_note:
+                vn = message.video_note
+                file = await vn.get_file()
+                filepath = dl_dir / f"video_note_{uuid.uuid4().hex[:8]}.mp4"
+                await file.download_to_drive(filepath)
+                download_texts.append(f"[用户发送了一段视频留言，已保存至 {filepath}]")
         except Exception as e:
             log.warning("telegram.download_failed", error=str(e))
             
