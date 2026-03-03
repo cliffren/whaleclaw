@@ -165,7 +165,7 @@ def create_app(config: WhaleclawConfig) -> FastAPI:
         summarizer_model = config.agent.summarizer.model.strip()
         prewarm_task: asyncio.Task[None] | None = None
         if config.agent.summarizer.enabled and summarizer_model:
-            group_compressor = SessionGroupCompressor(store)
+            group_compressor = SessionGroupCompressor(store, config.agent.summarizer)
             state["group_compressor"] = group_compressor
             state["compression_ready"] = False
             state["compression_running"] = True

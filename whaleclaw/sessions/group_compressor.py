@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from structlog.contextvars import bind_contextvars, reset_contextvars
 
+from whaleclaw.config.schema import SummarizerConfig
 from whaleclaw.providers.base import Message
 from whaleclaw.providers.router import ModelRouter
 from whaleclaw.sessions.store import SessionStore
@@ -21,7 +22,6 @@ RECENT_RAW_PREV_GROUPS = 2
 L1_GROUPS = 7
 L0_GROUPS = 15
 MAX_WINDOW_GROUPS = 25
-CONTENT_BUDGET = 1600
 BUILD_CONCURRENCY = 6
 log = get_logger(__name__)
 
@@ -167,8 +167,9 @@ class _PendingBuild:
 class SessionGroupCompressor:
     """LLM semantic compression for session groups with persistent cache."""
 
-    def __init__(self, store: SessionStore) -> None:
+    def __init__(self, store: SessionStore, config: SummarizerConfig | None = None) -> None:
         self._store = store
+        self._config = config or SummarizerConfig()
         self._pending_by_session: dict[str, dict[str, _PendingBuild]] = {}
         self._inflight_keys: set[str] = set()
         self._drain_tasks: dict[str, asyncio.Task[None]] = {}
@@ -272,7 +273,7 @@ class SessionGroupCompressor:
         if not groups:
             return messages
 
-        if len(groups) <= MAX_WINDOW_GROUPS and _group_tokens(groups[-1]) > CONTENT_BUDGET:
+        if len(groups) <= MAX_WINDOW_GROUPS and _group_tokens(groups[-1]) > self._config.content_budget:
             return groups[-1]
 
         plan = self._window_plan(messages)
@@ -429,7 +430,7 @@ class SessionGroupCompressor:
         groups = all_groups[-MAX_WINDOW_GROUPS:]
         start_idx = total_groups - len(groups) + 1
         recent_groups = all_groups[-RECENT_L2_GROUPS:]
-        recent_over_budget = sum(_group_tokens(g) for g in recent_groups) > CONTENT_BUDGET
+        recent_over_budget = sum(_group_tokens(g) for g in recent_groups) > self._config.content_budget
         items: list[_WindowItem] = []
         for offset, group in enumerate(groups):
             group_idx = start_idx + offset
@@ -519,7 +520,7 @@ class SessionGroupCompressor:
         return text, False
 
     def _fallback_group_text(self, item: _WindowItem) -> str:
-        budget = 220 if item.level == "L1" else 90
+        budget = self._config.recent_budget if item.level == "L1" else self._config.history_budget
         source = _group_text(item.group).strip()
         if not source:
             return ""
@@ -660,8 +661,8 @@ class SessionGroupCompressor:
         if not model_id.strip():
             return _group_text(group)[:900]
         source = _group_text(group)
-        budget = 220 if level == "L1" else 90
-        char_hint = 330 if level == "L1" else 140
+        budget = self._config.recent_budget if level == "L1" else self._config.history_budget
+        char_hint = int(budget * 1.5)
         sys_prompt = (
             "你是会话压缩器。仅可基于输入原文抽取信息，禁止新增事实。"
             f"目标层级={level}。硬约束：输出必须控制在约{budget} tokens以内"
@@ -698,14 +699,14 @@ class SessionGroupCompressor:
         if not groups:
             return groups
         total = sum(_group_tokens(g) for g in groups)
-        if total <= CONTENT_BUDGET:
+        if total <= self._config.content_budget:
             return groups
 
         latest = groups[-1]
-        if _group_tokens(latest) > CONTENT_BUDGET:
+        if _group_tokens(latest) > self._config.content_budget:
             return [latest]
 
         kept = list(groups)
-        while len(kept) > 1 and sum(_group_tokens(g) for g in kept) > CONTENT_BUDGET:
+        while len(kept) > 1 and sum(_group_tokens(g) for g in kept) > self._config.content_budget:
             kept.pop(0)
         return kept
