@@ -595,8 +595,19 @@ async def _execute_tool(
 def _format_tool_output(result: ToolResult) -> str:
     """Format ToolResult into a string for LLM consumption."""
     if result.success:
-        return result.output or "(empty output)"
-    return f"[ERROR] {result.error or 'unknown error'}\n{result.output}".strip()
+        out = result.output or "(empty output)"
+    else:
+        out = f"[ERROR] {result.error or 'unknown error'}\n{result.output}".strip()
+        
+    # Smart output truncation: prevents huge terminal outputs (like `cat pdf`)
+    # from blowing up the context window and causing the LLM to get lost.
+    if len(out) > 8000:
+        head = out[:3500]
+        tail = out[-3500:]
+        msg = f"\n\n... [System: Output exceeded 8000 chars. Middle {len(out) - 7000} chars truncated. Use grep/head/tail for details] ...\n\n"
+        out = head + msg + tail
+        
+    return out
 
 
 def _validate_tool_call_args(tc: ToolCall, registry: ToolRegistry) -> str | None:
