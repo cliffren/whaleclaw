@@ -43,6 +43,10 @@ if [ ! -f "$PYTHON" ]; then
     exit 1
 fi
 
+# 将 Python 所在的目录加入到 PATH 的最前面，
+# 这样 Agent 在执行 bash 工具时就会默认使用这个环境的 python、pip 等命令
+export PATH="$(dirname "$PYTHON"):$PATH"
+
 # 安装依赖（首次运行）
 if ! "$PYTHON" -c "import whaleclaw" 2>/dev/null; then
     echo ""
