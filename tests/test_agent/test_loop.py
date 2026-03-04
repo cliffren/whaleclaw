@@ -1122,3 +1122,48 @@ async def test_run_agent_keeps_short_external_memory_without_compress() -> None:
     )
     assert "压缩后经验" not in ext_msg.content
     assert "原始经验文本" in ext_msg.content
+
+
+@pytest.mark.asyncio
+async def test_run_agent_stops_at_max_tool_rounds() -> None:
+    """Agent should stop looping when max_tool_rounds is reached."""
+    tool_response = AgentResponse(
+        content="",
+        model="test-model",
+        tool_calls=[
+            ToolCall(id="tc_echo", name="echo", arguments={"text": "again"})
+        ],
+    )
+
+    call_count = 0
+
+    async def fake_chat(
+        model_id: str,  # noqa: ARG001
+        messages: list[Any],  # noqa: ARG001
+        *,
+        tools: Any = None,  # noqa: ARG001
+        on_stream: Any = None,  # noqa: ARG001
+        **kwargs: typing.Any,
+    ) -> AgentResponse:
+        nonlocal call_count
+        call_count += 1
+        # Always return a tool call — without max_tool_rounds this would loop forever
+        return tool_response
+
+    router = _make_router(chat_fn=fake_chat)
+    registry = ToolRegistry()
+    registry.register(_EchoTool())
+
+    cfg = WhaleclawConfig()
+    cfg.agent.max_tool_rounds = 2
+
+    result = await run_agent(
+        message="一直 echo",
+        session_id="test-max-rounds",
+        config=cfg,
+        router=router,
+        registry=registry,
+    )
+
+    assert "已达到最大执行轮次" in result
+    assert call_count <= 3  # at most max_tool_rounds + 1 LLM calls

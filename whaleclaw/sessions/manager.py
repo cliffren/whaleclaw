@@ -72,8 +72,9 @@ class SessionManager:
         for m in msg_rows:
             if m.role == "tool":
                 messages.append(Message(
-                    role="assistant",  # type: ignore[arg-type]
+                    role="tool",
                     content=m.content,
+                    tool_call_id=m.tool_call_id,
                 ))
             else:
                 messages.append(Message(
@@ -111,8 +112,7 @@ class SessionManager:
         tool_name: str | None = None,
     ) -> None:
         """Append a message to the session and persist it."""
-        mem_role = "assistant" if role == "tool" else role
-        msg = Message(role=mem_role, content=content)  # type: ignore[arg-type]
+        msg = Message(role=role, content=content)  # type: ignore[arg-type]
         session.messages.append(msg)
         session.updated_at = datetime.now(UTC)
         await self._store.add_message(

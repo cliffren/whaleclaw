@@ -606,7 +606,7 @@ async def _async_format_tool_output(
     else:
         out = f"[ERROR] {result.error or 'unknown error'}\n{result.output}".strip()
         
-    threshold = 2500
+    threshold = 1500
     if len(out) <= threshold:
         return out
         
@@ -1083,8 +1083,9 @@ async def run_agent(
     browser_fail_streak = 0
     blocked_tools: set[str] = set()
 
+    max_rounds = agent_cfg.max_tool_rounds
     round_idx = -1
-    while total_output < _MAX_OUTPUT_TOKENS:
+    while total_output < _MAX_OUTPUT_TOKENS and round_idx < max_rounds:
         round_idx += 1
         if db_summaries:
             all_messages = _context_window.trim_with_summaries(
@@ -1392,12 +1393,23 @@ async def run_agent(
 
         final_text_parts.clear()
     else:
-        log.warning(
-            "agent.token_budget_exhausted",
-            session_id=session_id,
-            rounds=round_idx + 1,
-            total_output=total_output,
-        )
+        if round_idx >= max_rounds:
+            log.warning(
+                "agent.max_tool_rounds_exceeded",
+                session_id=session_id,
+                rounds=round_idx + 1,
+                max_rounds=max_rounds,
+            )
+            final_text_parts.append(
+                f"已达到最大执行轮次 ({max_rounds})，当前进度如上。如需继续请发送新消息。"
+            )
+        else:
+            log.warning(
+                "agent.token_budget_exhausted",
+                session_id=session_id,
+                rounds=round_idx + 1,
+                total_output=total_output,
+            )
 
     final_text = "".join(final_text_parts)
     final_text = _fix_image_paths(final_text, real_image_paths)

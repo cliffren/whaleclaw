@@ -13,6 +13,8 @@ class TestPromptAssembler:
         assert len(messages) == 1
         assert messages[0].role == "system"
         assert "WhaleClaw" in messages[0].content
+        assert "任务追踪" in messages[0].content
+        assert "任务专注" in messages[0].content
 
     def test_static_has_cache_control(self) -> None:
         assembler = PromptAssembler()

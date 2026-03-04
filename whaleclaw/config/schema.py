@@ -76,7 +76,7 @@ class SummarizerConfig(BaseModel):
 
     model: str = "zhipu/glm-4.7-flash"
     enabled: bool = True
-    content_budget: int = 4000
+    content_budget: int = 12000
     history_budget: int = 150
     recent_budget: int = 400
 
