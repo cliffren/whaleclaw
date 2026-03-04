@@ -1,7 +1,7 @@
 # WhaleClaw — Agent Coding Guide
 
 **Project**: WhaleClaw — Personal AI Assistant
-**Runtime**: Python 3.12 (embedded at `./python/bin/python3.12`)
+**Runtime**: Python 3.12 (`miniconda` env: `whaleclaw`)
 **Package Manager**: pip + pyproject.toml
 **Framework**: FastAPI + uvicorn (async HTTP + WebSocket)
 
@@ -9,38 +9,38 @@
 
 ## Build/Lint/Test Commands
 
-CRITICAL: Always use the embedded Python, never system Python.
+CRITICAL: Always run Python commands in the `whaleclaw` conda env, never system Python.
 
 ```bash
 # Install dependencies
-./python/bin/pip3.12 install -e ".[dev]"
+conda run -n whaleclaw python -m pip install -e ".[dev]"
 
 # Run tests (all)
-./python/bin/python3.12 -m pytest
+conda run -n whaleclaw python -m pytest
 
 # Run single test file
-./python/bin/python3.12 -m pytest tests/test_config/test_schema.py
+conda run -n whaleclaw python -m pytest tests/test_config/test_schema.py
 
 # Run single test function
-./python/bin/python3.12 -m pytest tests/test_config/test_schema.py::TestGatewayConfig::test_defaults
+conda run -n whaleclaw python -m pytest tests/test_config/test_schema.py::TestGatewayConfig::test_defaults
 
 # Run single test class
-./python/bin/python3.12 -m pytest tests/test_config/test_schema.py::TestGatewayConfig
+conda run -n whaleclaw python -m pytest tests/test_config/test_schema.py::TestGatewayConfig
 
 # Run tests with coverage
-./python/bin/python3.12 -m pytest --cov=whaleclaw --cov-report=term-missing
+conda run -n whaleclaw python -m pytest --cov=whaleclaw --cov-report=term-missing
 
 # Lint (Ruff)
-./python/bin/python3.12 -m ruff check .
+conda run -n whaleclaw python -m ruff check .
 
 # Format (Ruff)
-./python/bin/python3.12 -m ruff format .
+conda run -n whaleclaw python -m ruff format .
 
 # Type check (pyright strict mode)
-./python/bin/python3.12 -m pyright
+conda run -n whaleclaw python -m pyright
 
 # Run gateway server
-./python/bin/python3.12 -m whaleclaw gateway run --port 18666 --verbose
+conda run -n whaleclaw python -m whaleclaw gateway run --port 18666 --verbose
 ```
 
 ---
@@ -185,10 +185,10 @@ whaleclaw/
 
 | Task | Command |
 |------|---------|
-| Run gateway | `./python/bin/python3.12 -m whaleclaw gateway run` |
-| Run all tests | `./python/bin/python3.12 -m pytest` |
-| Run single test | `./python/bin/python3.12 -m pytest tests/test_xxx/test_file.py::test_name` |
-| Lint | `./python/bin/python3.12 -m ruff check .` |
-| Format | `./python/bin/python3.12 -m ruff format .` |
-| Type check | `./python/bin/python3.12 -m pyright` |
-| Install deps | `./python/bin/pip3.12 install -e ".[dev]"` |
+| Run gateway | `conda run -n whaleclaw python -m whaleclaw gateway run` |
+| Run all tests | `conda run -n whaleclaw python -m pytest` |
+| Run single test | `conda run -n whaleclaw python -m pytest tests/test_xxx/test_file.py::test_name` |
+| Lint | `conda run -n whaleclaw python -m ruff check .` |
+| Format | `conda run -n whaleclaw python -m ruff format .` |
+| Type check | `conda run -n whaleclaw python -m pyright` |
+| Install deps | `conda run -n whaleclaw python -m pip install -e ".[dev]"` |

@@ -442,6 +442,23 @@ class SessionStore:
             for r in await cursor.fetchall()
         ]
 
+    async def get_today_token_usage(self) -> dict[str, int]:
+        cursor = await self._conn.execute(
+            "SELECT COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0)"
+            " FROM token_usage WHERE date(created_at) = date('now')"
+        )
+        row = await cursor.fetchone()
+        if row:
+            return {"input_tokens": row[0], "output_tokens": row[1]}
+        return {"input_tokens": 0, "output_tokens": 0}
+
+    async def get_today_llm_calls(self) -> int:
+        cursor = await self._conn.execute(
+            "SELECT COUNT(*) FROM token_usage WHERE date(created_at) = date('now')"
+        )
+        row = await cursor.fetchone()
+        return int(row[0]) if row else 0
+
     # ── Group compression cache ──
 
     async def get_group_compression(

@@ -201,6 +201,7 @@ class SimpleMemoryStore(MemoryStore):
     ) -> list[MemorySearchResult]:
         """Hybrid search: 70 % cosine similarity + 30 % keyword match."""
         query_vec = self._embed(query)
+        threshold = max(0.05, min_score * 0.7)
         results: list[MemorySearchResult] = []
         for entry in self._entries.values():
             vec_score = (
@@ -208,7 +209,7 @@ class SimpleMemoryStore(MemoryStore):
             )
             kw_score = self._keyword_score(query, entry.content)
             score = 0.7 * vec_score + 0.3 * kw_score
-            if score >= min_score:
+            if score >= threshold:
                 results.append(MemorySearchResult(entry=entry, score=score))
         results.sort(key=lambda r: (-r.score, -r.entry.created_at.timestamp()))
         return results[:limit]

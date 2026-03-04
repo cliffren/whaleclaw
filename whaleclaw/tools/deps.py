@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -12,10 +13,17 @@ from whaleclaw.utils.log import get_logger
 log = get_logger(__name__)
 
 _PROJECT_PYTHON = Path(__file__).resolve().parents[2] / "python" / "bin" / "python3.12"
+_CONDA_ENV_PYTHON = Path.home() / "miniconda3" / "envs" / "whaleclaw" / "bin" / "python"
 
 
 def _get_pip() -> list[str]:
-    """Return the pip command list, preferring project-embedded Python."""
+    conda_prefix = os.environ.get("CONDA_PREFIX", "").strip()
+    if conda_prefix:
+        conda_python = Path(conda_prefix) / "bin" / "python"
+        if conda_python.is_file():
+            return [str(conda_python), "-m", "pip"]
+    if _CONDA_ENV_PYTHON.is_file():
+        return [str(_CONDA_ENV_PYTHON), "-m", "pip"]
     if _PROJECT_PYTHON.is_file():
         return [str(_PROJECT_PYTHON), "-m", "pip"]
     return [sys.executable, "-m", "pip"]

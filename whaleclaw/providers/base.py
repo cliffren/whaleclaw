@@ -59,6 +59,7 @@ class AgentResponse(BaseModel):
     model: str
     input_tokens: int = 0
     output_tokens: int = 0
+    usage_estimated: bool = False
     stop_reason: str | None = None
     tool_calls: list[ToolCall] = Field(default_factory=list)
 

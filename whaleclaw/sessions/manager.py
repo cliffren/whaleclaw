@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, TypedDict
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
@@ -29,6 +29,16 @@ class Session(BaseModel):
     updated_at: datetime
     metadata: dict[str, Any] = Field(default_factory=dict)
     message_count: int = 0
+
+
+class TaskState(TypedDict):
+    """Persisted task execution state for multi-step continuity."""
+
+    goal: str
+    last_step: str
+    next_step: str
+    blocked_reason: str
+    status: str
 
 
 class SessionManager:
@@ -134,6 +144,57 @@ class SessionManager:
     async def update_thinking(self, session: Session, level: str) -> None:
         session.thinking_level = level
         await self._store.update_session_field(session.id, thinking_level=level)
+
+    def get_task_state(self, session: Session) -> TaskState:
+        """Read task_state from session metadata (with safe defaults)."""
+        raw = session.metadata.get("task_state")
+        if not isinstance(raw, dict):
+            return {
+                "goal": "",
+                "last_step": "",
+                "next_step": "",
+                "blocked_reason": "",
+                "status": "idle",
+            }
+        return {
+            "goal": str(raw.get("goal", "")),
+            "last_step": str(raw.get("last_step", "")),
+            "next_step": str(raw.get("next_step", "")),
+            "blocked_reason": str(raw.get("blocked_reason", "")),
+            "status": str(raw.get("status", "idle")),
+        }
+
+    async def update_task_state(
+        self,
+        session: Session,
+        *,
+        goal: str | None = None,
+        last_step: str | None = None,
+        next_step: str | None = None,
+        blocked_reason: str | None = None,
+        status: str | None = None,
+    ) -> TaskState:
+        """Merge and persist task_state into session metadata."""
+        task_state = self.get_task_state(session)
+        if goal is not None:
+            task_state["goal"] = goal
+        if last_step is not None:
+            task_state["last_step"] = last_step
+        if next_step is not None:
+            task_state["next_step"] = next_step
+        if blocked_reason is not None:
+            task_state["blocked_reason"] = blocked_reason
+        if status is not None:
+            task_state["status"] = status
+
+        session.metadata["task_state"] = task_state
+        session.updated_at = datetime.now(UTC)
+        await self._store.update_session_field(
+            session.id,
+            metadata=session.metadata,
+            updated_at=session.updated_at.isoformat(),
+        )
+        return task_state
 
     async def reset(self, session_id: str) -> Session | None:
         """Clear messages but keep the session."""

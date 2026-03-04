@@ -268,6 +268,7 @@ class FeishuBot:
                 trigger_event_id=reply_to_msg_id,
                 trigger_text_preview=text,
                 group_compressor=self._group_compressor,
+                user_message_persisted=True,
             )
             log.info("feishu.agent_reply", reply_len=len(reply), preview=reply[:200])
         except Exception as exc:

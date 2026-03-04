@@ -80,3 +80,27 @@ async def test_tool_message_preserves_role(manager: SessionManager) -> None:
     assert len(tool_msgs) == 1
     assert tool_msgs[0].content == "tool output here"
     assert tool_msgs[0].tool_call_id == "call_123"
+
+
+@pytest.mark.asyncio
+async def test_task_state_roundtrip(manager: SessionManager) -> None:
+    session = await manager.create("webchat", "user_task")
+    initial = manager.get_task_state(session)
+    assert initial["status"] == "idle"
+
+    await manager.update_task_state(
+        session,
+        goal="修复会话重复注入",
+        last_step="定位到 run_agent",
+        next_step="修改注入逻辑并补测试",
+        blocked_reason="",
+        status="in_progress",
+    )
+
+    loaded = await manager.get(session.id)
+    assert loaded is not None
+    task_state = manager.get_task_state(loaded)
+    assert task_state["goal"] == "修复会话重复注入"
+    assert task_state["last_step"] == "定位到 run_agent"
+    assert task_state["next_step"] == "修改注入逻辑并补测试"
+    assert task_state["status"] == "in_progress"

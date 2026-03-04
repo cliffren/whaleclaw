@@ -145,6 +145,19 @@ def _build_task_status_block(current_group_idx: int, current_group: list[Message
     ])
 
 
+def _build_latest_task_anchor(items: list[tuple[int, list[Message]]], current_group_idx: int) -> str:
+    for idx, group in reversed(items):
+        if idx >= current_group_idx:
+            continue
+        user_text = _extract_latest_user_text(group)
+        if user_text:
+            return "\n".join([
+                "【未完成任务锚点】",
+                f"第{idx}轮目标: {user_text}",
+            ])
+    return ""
+
+
 def _build_done_summary_zh(
     *,
     window_groups: int,
@@ -340,24 +353,14 @@ class SessionGroupCompressor:
 
         history_items: list[tuple[int, str]] = []
         recent_l2_items: list[tuple[int, list[Message]]] = []
-        task_anchor_item: _WindowItem | None = None
+        all_recent_l2_items: list[tuple[int, list[Message]]] = []
         for idx, item in enumerate(plan):
             if item.level == "L2":
-                # Separate the first group (original task) from recent L2 items
-                if item.group_idx == 1:
-                    task_anchor_item = item
-                else:
-                    recent_l2_items.append((item.group_idx, item.group))
+                recent_l2_items.append((item.group_idx, item.group))
+                all_recent_l2_items.append((item.group_idx, item.group))
                 continue
             content, _ = compressed_results[idx]
             history_items.append((item.group_idx, content))
-
-        # Inject task anchor: the original user request, always at the front
-        if task_anchor_item is not None:
-            anchor_text = _group_text(task_anchor_item.group)
-            anchor_text = _clip_text(anchor_text, 300)
-            if anchor_text:
-                rendered.append([Message(role="assistant", content=f"【原始任务】\n{anchor_text}")])
 
         if history_items:
             history_block = _build_history_summary_block(history_items)
@@ -372,6 +375,9 @@ class SessionGroupCompressor:
         current_group_idx, current_group = recent_l2_items[-1]
         prev_recent = recent_l2_items[:-1]
         prev_recent = prev_recent[-RECENT_RAW_PREV_GROUPS:]
+        task_anchor = _build_latest_task_anchor(all_recent_l2_items, current_group_idx)
+        if task_anchor:
+            rendered.append([Message(role="assistant", content=task_anchor)])
         if prev_recent:
             recent_block = _build_recent_raw_block(prev_recent)
             recent_block = _clip_text(recent_block, 320)
@@ -459,10 +465,7 @@ class SessionGroupCompressor:
         for offset, group in enumerate(groups):
             group_idx = start_idx + offset
             from_tail = total_groups - group_idx + 1
-            # First group (original user task) is always kept raw for task anchoring
-            if group_idx == 1:
-                level = "L2"
-            elif recent_over_budget and from_tail == 1:
+            if recent_over_budget and from_tail == 1:
                 level = "L2"
             elif recent_over_budget and from_tail in {2, 3}:
                 level = "L0"

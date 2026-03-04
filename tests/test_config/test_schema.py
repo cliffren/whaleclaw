@@ -33,6 +33,12 @@ class TestAgentConfig:
         cfg = AgentConfig()
         assert "anthropic" in cfg.model
         assert cfg.workspace
+        assert cfg.max_llm_calls_per_day == 500
+        assert cfg.max_tokens_per_day == 2_000_000
+        assert cfg.max_retries_per_task == 2
+        assert cfg.auto_split_after_rounds == 8
+        assert cfg.summarizer.tool_output_enabled is False
+        assert cfg.summarizer.tool_output_model == ""
 
 
 class TestWhaleclawConfig:

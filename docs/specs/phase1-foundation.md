@@ -9,7 +9,7 @@
 
 ## 前置条件
 
-- Python 3.12 (项目内嵌 `./python/bin/python3.12`)
+- Python 3.12（miniconda 环境 `whaleclaw`）
 - Anthropic API Key (用于测试)
 
 ---
@@ -401,7 +401,7 @@ from whaleclaw.version import __version__
 
 ### AC-1: Gateway 启动
 ```bash
-./python/bin/python3.12 -m whaleclaw gateway run --port 18666 --verbose
+conda run -n whaleclaw python -m whaleclaw gateway run --port 18666 --verbose
 # 输出: Gateway 启动日志，监听 127.0.0.1:18666
 ```
 
@@ -435,13 +435,13 @@ asyncio.run(test())
 # 创建配置文件
 mkdir -p ~/.whaleclaw
 echo '{"gateway": {"port": 19000}}' > ~/.whaleclaw/whaleclaw.json
-./python/bin/python3.12 -m whaleclaw gateway run
+conda run -n whaleclaw python -m whaleclaw gateway run
 # 应监听 19000 端口
 ```
 
 ### AC-5: 单元测试
 ```bash
-./python/bin/python3.12 -m pytest tests/ -v
+conda run -n whaleclaw python -m pytest tests/ -v
 # 所有测试通过
 ```
 

@@ -8,6 +8,7 @@ provides a reusable base that all of them inherit.
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 import json
 import os
 from typing import Any
@@ -26,6 +27,21 @@ from whaleclaw.types import ProviderAuthError, ProviderError, ProviderRateLimitE
 from whaleclaw.utils.log import get_logger
 
 log = get_logger(__name__)
+
+
+def _estimate_tokens(text: str) -> int:
+    cjk = sum(1 for ch in text if "\u4e00" <= ch <= "\u9fff")
+    latin = len(text) - cjk
+    return max(1, int(cjk / 1.5 + latin / 4)) if text else 0
+
+
+def _estimate_input_tokens(messages: list[Message]) -> int:
+    total = 0
+    for msg in messages:
+        total += _estimate_tokens(msg.content)
+        if msg.images:
+            total += 256 * len(msg.images)
+    return total
 
 
 class _ToolCallAccumulator:
@@ -136,6 +152,7 @@ class OpenAICompatProvider(LLMProvider):
             "model": model,
             "messages": msgs,
             "stream": True,
+            "stream_options": {"include_usage": True},
         }
         if tools:
             body["tools"] = [
@@ -258,21 +275,25 @@ class OpenAICompatProvider(LLMProvider):
                     error=exc.__class__.__name__,
                 )
                 if on_retry:
-                    try:
+                    with suppress(Exception):
                         await on_retry(attempt, max_attempts, exc.__class__.__name__)
-                    except Exception:
-                        pass
                 await asyncio.sleep(backoff_seconds)
                 continue
 
             full_text = "".join(collected)
             tool_calls = tc_acc.build()
+            usage_estimated = False
+            if input_tokens <= 0 and output_tokens <= 0:
+                input_tokens = _estimate_input_tokens(messages)
+                output_tokens = _estimate_tokens(full_text)
+                usage_estimated = True
             elapsed_ms = int((asyncio.get_event_loop().time() - t0) * 1000)
             log.debug(
                 f"{self.provider_name}.response",
                 model=model,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
+                usage_estimated=usage_estimated,
                 tool_calls=len(tool_calls),
                 elapsed_ms=elapsed_ms,
                 attempt=attempt,
@@ -282,6 +303,7 @@ class OpenAICompatProvider(LLMProvider):
                 model=model,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
+                usage_estimated=usage_estimated,
                 stop_reason=stop_reason,
                 tool_calls=tool_calls,
             )

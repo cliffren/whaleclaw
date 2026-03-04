@@ -670,6 +670,7 @@ class TelegramBot:
                 memory_manager=self._memory_manager,
                 extra_memory=extra_memory,
                 group_compressor=self._group_compressor,
+                user_message_persisted=True,
             )
             log.info("telegram.agent_reply", reply_len=len(reply), preview=reply[:200])
         except Exception as exc:

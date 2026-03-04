@@ -536,9 +536,13 @@ class MemoryManager:
         if pending <= 0:
             return False
 
+        should_force_flush = (
+            _is_force_flush_capture(text)
+            or bool(re.search(r"(叫我|以后叫)", text))
+        )
         await self.flush_capture_buffer(
             source=source,
-            force=_is_force_flush_capture(text),
+            force=should_force_flush,
             batch_size=batch_size,
             merge_window_seconds=merge_window_seconds,
             mode=mode,

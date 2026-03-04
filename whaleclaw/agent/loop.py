@@ -26,7 +26,7 @@ from whaleclaw.providers.base import AgentResponse, ImageContent, Message, ToolC
 from whaleclaw.providers.router import ModelRouter
 from whaleclaw.sessions.compressor import ContextCompressor
 from whaleclaw.sessions.context_window import RECENT_PROTECTED, ContextWindow
-from whaleclaw.sessions.manager import Session, SessionManager
+from whaleclaw.sessions.manager import Session, SessionManager, TaskState
 from whaleclaw.sessions.store import SessionStore
 from whaleclaw.tools.base import ToolDefinition, ToolResult
 from whaleclaw.tools.registry import ToolRegistry
@@ -50,6 +50,7 @@ _MAX_OUTPUT_TOKENS = 200_000
 _EVOMAP_MAX_TOKENS = 1000
 _EXTRA_MEMORY_COMPRESS_TIMEOUT_SECONDS = 8
 _DEFAULT_ASSISTANT_NAME = "WhaleClaw"
+_TASK_STATE_MAX_TOKENS = 120
 
 _IMG_MD_RE = re.compile(r"!\[([^\]]*)\]\((/[^)]+)\)")
 _ASSISTANT_NAME_RESET_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -289,6 +290,121 @@ async def _compress_external_memory_with_llm(
 def _merge_recall_blocks(profile: str, raw: str) -> str:
     blocks = [x.strip() for x in (profile, raw) if x.strip()]
     return "\n".join(blocks)
+
+
+def _default_task_state(goal: str = "") -> TaskState:
+    return {
+        "goal": goal.strip(),
+        "last_step": "",
+        "next_step": "继续分析并执行下一步",
+        "blocked_reason": "",
+        "status": "in_progress" if goal.strip() else "idle",
+    }
+
+
+def _build_task_state_system_message(task_state: TaskState) -> Message | None:
+    goal = task_state.get("goal", "").strip()
+    if not goal:
+        return None
+    last_step = task_state.get("last_step", "").strip() or "暂无"
+    next_step = task_state.get("next_step", "").strip() or "继续推进当前任务"
+    blocked_reason = task_state.get("blocked_reason", "").strip() or "无"
+    status = task_state.get("status", "in_progress").strip() or "in_progress"
+    body = "\n".join([
+        "【任务状态卡】",
+        f"目标: {goal}",
+        f"状态: {status}",
+        f"已完成: {last_step}",
+        f"阻塞: {blocked_reason}",
+        f"下一步: {next_step}",
+        "规则: 禁止自我介绍，必须围绕目标推进。",
+    ])
+    return Message(role="system", content=_truncate_to_tokens(body, _TASK_STATE_MAX_TOKENS))
+
+
+def _build_recovery_message(task_state: TaskState) -> str:
+    goal = task_state.get("goal", "").strip() or "当前任务"
+    done = task_state.get("last_step", "").strip() or "暂无明确进展"
+    blocked = task_state.get("blocked_reason", "").strip() or "未发现明确阻塞"
+    next_step = task_state.get("next_step", "").strip() or "请确认下一步执行方向"
+    return (
+        "我进入了恢复模式，先同步当前进度：\n"
+        f"- 任务目标：{goal}\n"
+        f"- 已完成：{done}\n"
+        f"- 未完成/阻塞：{blocked}\n"
+        f"- 下一步：{next_step}"
+    )
+
+
+def _pick_fallback_model(
+    models_cfg: ModelsConfig,
+    current_model: str,
+    cheap_model: str,
+) -> str | None:
+    if cheap_model and cheap_model != current_model:
+        return cheap_model
+
+    candidates: list[str] = []
+    provider_names = (
+        "anthropic",
+        "openai",
+        "deepseek",
+        "qwen",
+        "zhipu",
+        "minimax",
+        "moonshot",
+        "google",
+        "nvidia",
+        "bailian",
+    )
+    for provider_name in provider_names:
+        provider_cfg = getattr(models_cfg, provider_name)
+        for entry in provider_cfg.configured_models:
+            if entry.verified:
+                candidates.append(f"{provider_name}/{entry.id}")
+
+    for model in candidates:
+        if model != current_model:
+            return model
+    return None
+
+
+def _task_stage_force_tools(user_message: str, task_goal: str = "") -> set[str]:
+    text = f"{user_message}\n{task_goal}".lower()
+    keys = ("安装", "技能", "skill", "仓库", "repo", "repository")
+    if any(k in text for k in keys):
+        return {"skill", "bash", "browser"}
+    return set()
+
+
+def _should_retry_tool_call(tool_name: str, error: str) -> bool:
+    if not error.strip():
+        return False
+    if tool_name not in {"browser", "bash"}:
+        return False
+    low = error.lower()
+    retryable = (
+        "timeout",
+        "timed out",
+        "connecterror",
+        "connection",
+        "readtimeout",
+        "temporarily unavailable",
+        "econnreset",
+    )
+    return any(token in low for token in retryable)
+
+
+def _build_task_split_hint(task_state: TaskState) -> str:
+    goal = task_state.get("goal", "").strip() or "当前任务"
+    return "\n".join([
+        "[系统提示] 当前任务轮次较多，请按三段执行并只做下一段：",
+        f"目标: {goal}",
+        "1) 检索: 收集必要信息/路径/报错；",
+        "2) 执行: 调用合适工具实施变更；",
+        "3) 验证: 用测试或命令确认结果。",
+        "先完成第1段并返回结论。",
+    ])
 
 
 def _is_creation_task_message(text: str) -> bool:
@@ -837,6 +953,7 @@ async def run_agent(
     trigger_event_id: str = "",
     trigger_text_preview: str = "",
     group_compressor: "SessionGroupCompressor | None" = None,
+    user_message_persisted: bool = False,
 ) -> str:
     """Run the Agent loop with tool support and multi-turn context.
 
@@ -850,6 +967,9 @@ async def run_agent(
     agent_cfg = cast(AgentConfig, config.agent)
     models_cfg = cast(ModelsConfig, config.models)
     summarizer_cfg = cast(SummarizerConfig, agent_cfg.summarizer)
+    tool_output_model: str | None = None
+    if summarizer_cfg.tool_output_enabled:
+        tool_output_model = summarizer_cfg.tool_output_model.strip() or summarizer_cfg.model.strip()
 
     model_id: str = session.model if session else agent_cfg.model
     if router is None:
@@ -907,6 +1027,7 @@ async def run_agent(
     selected_tool_names: set[str] | None = None
     if native_tools:
         selected_tool_names = _select_native_tool_names(registry, message)
+        selected_tool_names.update(_task_stage_force_tools(message))
         tool_schemas = registry.to_llm_schemas(include_names=selected_tool_names)
         all_tool_names = {d.name for d in registry.list_tools()}
         dropped_names = sorted(all_tool_names - selected_tool_names)
@@ -1018,7 +1139,12 @@ async def run_agent(
     conversation: list[Message] = []
     if session:
         conversation = list(session.messages)
-    conversation.append(Message(role="user", content=message, images=images))
+    if user_message_persisted and session and conversation and conversation[-1].role == "user":
+        if images:
+            last = conversation[-1]
+            conversation[-1] = Message(role="user", content=last.content, images=images)
+    else:
+        conversation.append(Message(role="user", content=message, images=images))
     conversation_message_count = len(conversation)
 
     if (
@@ -1074,26 +1200,72 @@ async def run_agent(
         except Exception as exc:
             log.debug("agent.summaries_load_failed", error=str(exc))
 
+    task_state = _default_task_state(message)
+    if session_manager and session:
+        try:
+            saved_task_state = session_manager.get_task_state(session)
+            if any(saved_task_state.values()):
+                task_state = saved_task_state
+                if not task_state["goal"]:
+                    task_state["goal"] = message.strip()
+            else:
+                await session_manager.update_task_state(session, **task_state)
+        except Exception as exc:
+            log.debug("agent.task_state_load_failed", error=str(exc), session_id=session_id)
+
+    if native_tools and selected_tool_names is not None:
+        forced_tools = _task_stage_force_tools(message, task_state["goal"])
+        if forced_tools - selected_tool_names:
+            selected_tool_names.update(forced_tools)
+            tool_schemas = registry.to_llm_schemas(include_names=selected_tool_names)
+
     import hashlib as _hashlib
 
     _recent_signatures: list[str] = []
-    _loop_detect_window = 3
+    _loop_detect_window = 2
     invalid_tool_rounds = 0
     empty_reply_rounds = 0
     browser_fail_streak = 0
     blocked_tools: set[str] = set()
+    failover_used = False
+    task_split_injected = False
+    retries_used = 0
 
     max_rounds = agent_cfg.max_tool_rounds
+    if session_store is not None:
+        try:
+            today_calls = await session_store.get_today_llm_calls()
+            today_usage = await session_store.get_today_token_usage()
+            today_tokens = today_usage["input_tokens"] + today_usage["output_tokens"]
+            if today_calls >= agent_cfg.max_llm_calls_per_day or today_tokens >= agent_cfg.max_tokens_per_day:
+                return (
+                    "已触发今日预算阈值，进入确认模式。"
+                    "请确认是否继续高成本任务，或让我先输出最小可执行下一步。"
+                )
+        except Exception as exc:
+            log.debug("agent.daily_budget_check_failed", error=str(exc), session_id=session_id)
+
     round_idx = -1
     while total_output < _MAX_OUTPUT_TOKENS and round_idx < max_rounds:
         round_idx += 1
+        if (
+            not task_split_injected
+            and agent_cfg.auto_split_after_rounds > 0
+            and round_idx >= agent_cfg.auto_split_after_rounds
+        ):
+            task_split_injected = True
+            task_state["next_step"] = "按检索/执行/验证三段拆分推进"
+            conversation.append(Message(role="user", content=_build_task_split_hint(task_state)))
+
+        state_message = _build_task_state_system_message(task_state)
+        system_with_state = [*system_messages, state_message] if state_message else system_messages
         if db_summaries:
             all_messages = _context_window.trim_with_summaries(
-                [*system_messages, *conversation], model_short, db_summaries,
+                [*system_with_state, *conversation], model_short, db_summaries,
             )
         else:
             all_messages = _context_window.trim(
-                [*system_messages, *conversation], model_short,
+                [*system_with_state, *conversation], model_short,
             )
 
         _llm_t0 = _time.monotonic()
@@ -1109,6 +1281,12 @@ async def run_agent(
         round_output = response.output_tokens
         total_input += round_input
         total_output += round_output
+        if total_input + total_output >= agent_cfg.max_tokens_per_day:
+            final_text_parts.append(
+                "当前任务已达到 token 预算阈值，进入确认模式。"
+                "如需继续，请回复“继续执行”；否则我可先给你阶段性结果。"
+            )
+            break
         log.info(
             "agent.llm_call",
             round=round_idx,
@@ -1116,6 +1294,7 @@ async def run_agent(
             model=model_id,
             round_input_tokens=round_input,
             round_output_tokens=round_output,
+            usage_estimated=response.usage_estimated,
             total_input_tokens=total_input,
             total_output_tokens=total_output,
             trigger_event_id=trigger_event_id,
@@ -1214,9 +1393,31 @@ async def run_agent(
                     final_text_parts.append(
                         "工具调用参数连续无效，已停止自动重试。请明确参数后重试。"
                     )
+                    task_state["status"] = "blocked"
+                    task_state["blocked_reason"] = "工具调用参数连续无效"
+                    break
+                retries_used += 1
+                if retries_used > agent_cfg.max_retries_per_task:
+                    final_text_parts.append(_build_recovery_message(task_state))
                     break
                 continue
             invalid_tool_rounds = 0
+
+        if tool_calls:
+            unique_tools = ", ".join(sorted({tc.name for tc in tool_calls}))
+            task_state["last_step"] = f"已发起工具调用：{unique_tools}"
+            task_state["next_step"] = "等待工具执行结果并继续推进"
+            task_state["blocked_reason"] = ""
+            task_state["status"] = "in_progress"
+            if session_manager and session:
+                try:
+                    await session_manager.update_task_state(session, **task_state)
+                except Exception as exc:
+                    log.debug(
+                        "agent.task_state_save_failed",
+                        error=str(exc),
+                        session_id=session_id,
+                    )
 
         content = response.content or ""
         if content:
@@ -1238,6 +1439,10 @@ async def run_agent(
                 empty_reply_rounds=empty_reply_rounds,
             )
             if empty_reply_rounds == 1:
+                retries_used += 1
+                if retries_used > agent_cfg.max_retries_per_task:
+                    final_text_parts.append(_build_recovery_message(task_state))
+                    break
                 conversation.append(
                     Message(
                         role="user",
@@ -1248,12 +1453,68 @@ async def run_agent(
                     )
                 )
                 continue
-            final_text_parts.append(
-                "我这边没收到模型有效回复。请再发一次需求，我会继续处理。"
-            )
+
+            task_state["status"] = "blocked"
+            task_state["blocked_reason"] = "模型连续空回复"
+            task_state["next_step"] = "切换备用模型进行恢复"
+            if session_manager and session:
+                try:
+                    await session_manager.update_task_state(session, **task_state)
+                except Exception as exc:
+                    log.debug("agent.task_state_save_failed", error=str(exc), session_id=session_id)
+
+            if not failover_used:
+                fallback_model = _pick_fallback_model(
+                    models_cfg,
+                    model_id,
+                    summarizer_cfg.model.strip(),
+                )
+                if fallback_model:
+                    failover_used = True
+                    recovery_prompt = _build_recovery_message(task_state)
+                    recovery_messages = [
+                        Message(
+                            role="system",
+                            content=(
+                                "你处于恢复模式。"
+                                "禁止任何自我介绍或身份描述。"
+                                "请仅输出：已完成/未完成/下一步。"
+                            ),
+                        ),
+                        Message(role="user", content=recovery_prompt),
+                    ]
+                    try:
+                        recovery_resp = await router.chat(
+                            fallback_model,
+                            recovery_messages,
+                            on_stream=on_stream,
+                            on_retry=on_retry,
+                        )
+                        if recovery_resp.content.strip():
+                            final_text_parts.append(recovery_resp.content.strip())
+                            break
+                    except Exception as exc:
+                        log.warning(
+                            "agent.recovery_failover_failed",
+                            session_id=session_id,
+                            model=fallback_model,
+                            error=str(exc),
+                        )
+
+            final_text_parts.append(_build_recovery_message(task_state))
             break
 
         if not tool_calls:
+            task_state["status"] = "completed"
+            if content.strip():
+                task_state["last_step"] = "已生成最终答复"
+                task_state["next_step"] = "等待用户下一条指令"
+                task_state["blocked_reason"] = ""
+            if session_manager and session:
+                try:
+                    await session_manager.update_task_state(session, **task_state)
+                except Exception as exc:
+                    log.debug("agent.task_state_save_failed", error=str(exc), session_id=session_id)
             break
 
         if not announced_plan and on_stream:
@@ -1297,6 +1558,18 @@ async def run_agent(
             tc_id, result = await _execute_tool(
                 registry, tc, on_tool_call, on_tool_result
             )
+            if (
+                not result.success
+                and _should_retry_tool_call(tc.name, result.error or "")
+                and retries_used < agent_cfg.max_retries_per_task
+            ):
+                retries_used += 1
+                tc_id, result = await _execute_tool(
+                    registry,
+                    tc,
+                    on_tool_call,
+                    on_tool_result,
+                )
             if tc.name == "browser":
                 if result.success:
                     browser_fail_streak = 0
@@ -1333,7 +1606,7 @@ async def run_agent(
                 tc_args=tc.arguments,
                 user_query=message,
                 router=router,
-                summarizer_model=summarizer_cfg.model.strip() if summarizer_cfg.enabled else None,
+                summarizer_model=tool_output_model if summarizer_cfg.enabled else None,
             )
 
             if native_tools:
@@ -1366,6 +1639,20 @@ async def run_agent(
                 success=result.success,
                 output_len=len(result.output),
             )
+            if result.success:
+                task_state["last_step"] = f"工具 {tc.name} 执行成功"
+                task_state["next_step"] = "基于工具结果继续执行下一步"
+                task_state["blocked_reason"] = ""
+            else:
+                task_state["last_step"] = f"工具 {tc.name} 执行失败"
+                task_state["blocked_reason"] = result.error or f"{tc.name} 执行失败"
+                task_state["next_step"] = "改用其他工具或调整参数后重试"
+
+            if session_manager and session:
+                try:
+                    await session_manager.update_task_state(session, **task_state)
+                except Exception as exc:
+                    log.debug("agent.task_state_save_failed", error=str(exc), session_id=session_id)
 
         sig_parts = []
         for tc in tool_calls:
@@ -1383,13 +1670,53 @@ async def run_agent(
                     rounds=round_idx + 1,
                     repeated_tool=tool_calls[0].name,
                 )
-                conversation.append(Message(
-                    role="user",
-                    content=(
-                        "[系统提示] 检测到你在重复执行相同操作且未取得进展。"
-                        "请换一种方式解决问题，或直接向用户说明当前遇到的困难。"
-                    ),
-                ))
+                task_state["status"] = "blocked"
+                task_state["blocked_reason"] = "检测到重复工具调用循环"
+                task_state["next_step"] = "进入恢复模式，输出当前进度并切备用模型"
+                if session_manager and session:
+                    try:
+                        await session_manager.update_task_state(session, **task_state)
+                    except Exception as exc:
+                        log.debug("agent.task_state_save_failed", error=str(exc), session_id=session_id)
+
+                if not failover_used:
+                    fallback_model = _pick_fallback_model(
+                        models_cfg,
+                        model_id,
+                        summarizer_cfg.model.strip(),
+                    )
+                    if fallback_model:
+                        failover_used = True
+                        recovery_prompt = _build_recovery_message(task_state)
+                        try:
+                            recovery_resp = await router.chat(
+                                fallback_model,
+                                [
+                                    Message(
+                                        role="system",
+                                        content=(
+                                            "你处于恢复模式。禁止自我介绍。"
+                                            "请严格输出：已完成/未完成/下一步。"
+                                        ),
+                                    ),
+                                    Message(role="user", content=recovery_prompt),
+                                ],
+                                on_stream=on_stream,
+                                on_retry=on_retry,
+                            )
+                            if recovery_resp.content.strip():
+                                final_text_parts.append(recovery_resp.content.strip())
+                                break
+                        except Exception as exc:
+                            log.warning(
+                                "agent.recovery_failover_failed",
+                                session_id=session_id,
+                                model=fallback_model,
+                                error=str(exc),
+                            )
+
+                final_text_parts.append(_build_recovery_message(task_state))
+                break
 
         final_text_parts.clear()
     else:

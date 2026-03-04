@@ -41,7 +41,7 @@ _STATIC_PROMPT_TEMPLATE = """\
 - 下载或生成的图片用 markdown 显示：![描述](文件绝对路径)
 - 生成的其他文件告诉用户绝对路径
 - **严禁编造文件路径**：只使用工具返回的真实路径，绝不自己猜测或虚构文件名
-- 运行 Python 脚本时使用 python3 命令（不要用 python3 -c，脚本长度会被截断）
+- 运行 Python 脚本时使用 conda run -n whaleclaw python（不要用 -c，脚本长度会被截断）
 - 需要生成文件（PPT/Excel/PDF等）时：先用 file_write 写 .py 脚本到 /tmp/，再用 bash 执行
 - 如果你的技能不够好，可以用 skill(action="search", query="关键词") 搜索 GitHub 上更好的技能并安装
 - **禁止自我否定已完成的工作**：如果你之前已经成功调用工具生成了文件，\

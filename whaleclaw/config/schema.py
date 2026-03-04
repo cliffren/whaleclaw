@@ -75,6 +75,8 @@ class SummarizerConfig(BaseModel):
     """
 
     model: str = "zhipu/glm-4.7-flash"
+    tool_output_enabled: bool = False
+    tool_output_model: str = ""
     enabled: bool = True
     content_budget: int = 12000
     history_budget: int = 150
@@ -110,6 +112,10 @@ class AgentConfig(BaseModel):
 
     model: str = "anthropic/claude-sonnet-4-20250514"
     max_tool_rounds: int = 25
+    max_llm_calls_per_day: int = 500
+    max_tokens_per_day: int = 2_000_000
+    max_retries_per_task: int = 2
+    auto_split_after_rounds: int = 8
     workspace: str = str(WORKSPACE_DIR)
     thinking_level: str = "off"
     summarizer: SummarizerConfig = Field(default_factory=SummarizerConfig)

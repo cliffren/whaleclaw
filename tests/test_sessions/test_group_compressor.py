@@ -121,7 +121,7 @@ async def test_recent_over_budget_downgrades_non_first_groups_to_l0(tmp_path) ->
     store = await _mk_store(tmp_path)
     try:
         compressor = SessionGroupCompressor(store)
-        # 6 groups: first is always L2 (anchor), groups 4-5 should be L0 (over budget), group 6 L2
+        # 6 groups: under recent over-budget mode, group 6 should be L2
         groups = [
             _mk_group(1, "旧历史"),
             _mk_group(2, "中间历史"),
@@ -131,9 +131,6 @@ async def test_recent_over_budget_downgrades_non_first_groups_to_l0(tmp_path) ->
             _mk_group(6, "最近第1组 " + ("超长内容 " * 600)),
         ]
         plan = compressor._window_plan(_flatten(groups))  # noqa: SLF001
-        # First group is always L2 (task anchor)
-        first_item = next(x for x in plan if x.group_idx == 1)
-        assert first_item.level == "L2"
         # Last group (most recent) should be L2
         assert plan[-1].level == "L2"
     finally:
@@ -150,44 +147,17 @@ async def test_window_plan_compresses_22_groups_when_25_groups_present(tmp_path)
         l2 = sum(1 for x in plan if x.level == "L2")
         l1 = sum(1 for x in plan if x.level == "L1")
         l0 = sum(1 for x in plan if x.level == "L0")
-        # First group is always L2 (task anchor) + 3 recent L2 = 4 L2 total
-        assert l2 == 4
+        # Only 3 recent groups are L2
+        assert l2 == 3
         assert l1 == 7
-        assert l0 == 14
-        # First group must be L2
-        assert plan[0].group_idx <= 25
-        first_item = next(x for x in plan if x.group_idx == 1)
-        assert first_item.level == "L2"
+        assert l0 == 15
     finally:
         await store.close()
 
 
 @pytest.mark.asyncio
-async def test_first_group_always_l2(tmp_path) -> None:  # noqa: ANN001
-    """First group (original user task) should always be L2 regardless of history length."""
-    store = await _mk_store(tmp_path)
-    try:
-        compressor = SessionGroupCompressor(store)
-        # Create 30 groups — first group should still be L2 even though it's very old
-        groups = [_mk_group(i, "消息内容") for i in range(1, 31)]
-        plan = compressor._window_plan(_flatten(groups))  # noqa: SLF001
-        # Only the last 25 groups are in the window, but if group_idx=1 is in window, it's L2
-        for item in plan:
-            if item.group_idx == 1:
-                assert item.level == "L2", f"First group should be L2, got {item.level}"
-                break
-        # For groups within window, verify first available group
-        if plan[0].group_idx > 1:
-            # First group fell outside window — that's OK, the anchor logic in
-            # build_window_messages handles this separately
-            pass
-    finally:
-        await store.close()
-
-
-@pytest.mark.asyncio
-async def test_build_window_includes_task_anchor(tmp_path) -> None:  # noqa: ANN001
-    """build_window_messages should inject a 【原始任务】 anchor block from the first group."""
+async def test_build_window_includes_latest_task_anchor(tmp_path) -> None:  # noqa: ANN001
+    """build_window_messages should inject a latest unfinished task anchor block."""
     store = await _mk_store(tmp_path)
     try:
         compressor = SessionGroupCompressor(store)
@@ -212,7 +182,7 @@ async def test_build_window_includes_task_anchor(tmp_path) -> None:  # noqa: ANN
         )
 
         text = "\n".join(m.content for m in output)
-        assert "【原始任务】" in text
-        assert "帮我写一个Python爬虫脚本" in text
+        assert "【未完成任务锚点】" in text
+        assert "第7轮目标" in text
     finally:
         await store.close()

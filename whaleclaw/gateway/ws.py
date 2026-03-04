@@ -292,6 +292,7 @@ async def websocket_handler(
                     trigger_event_id=incoming.id,
                     trigger_text_preview=content or "(用户发送了图片)",
                     group_compressor=group_compressor,
+                    user_message_persisted=True,
                 )
                 await session_manager.add_message(session, "assistant", reply)
                 await _safe_send(websocket, make_message(session.id, reply))
